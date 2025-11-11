@@ -1,14 +1,12 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
+const jwt = require('jsonwebtoken')
 const User = require('../models/user');
 
 
 const router = express.Router();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'SECRET_KEY';
-const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
 // Signup - requires username, email, password
 router.post('/signup', async (req, res) => {
@@ -56,50 +54,6 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Forgot password - sends reset email
-router.post('/forgot-password', async (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email is required' });
-
-  try {
-    const user = await User.findOne({ email });
-    if (!user) return res.status(200).json({ message: 'If that email is registered, a reset link has been sent.' });
-
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    user.resetPasswordToken = resetToken;
-    user.resetPasswordExpires = Date.now() + 3600000; // 1 hour
-    await user.save();
-
-    const resetUrl = `${BASE_URL}/auth/reset-password/${resetToken}`;
-    await mailer.sendResetEmail(email, user.username, resetUrl);
-
-    res.json({ message: 'If that email is registered, a reset link has been sent.' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Reset password
-router.post('/reset-password/:token', async (req, res) => {
-  const { token } = req.params;
-  const { password } = req.body;
-  if (!password) return res.status(400).json({ error: 'New password is required' });
-
-  try {
-    const user = await User.findOne({ resetPasswordToken: token, resetPasswordExpires: { $gt: Date.now() } });
-    if (!user) return res.status(400).json({ error: 'Invalid or expired reset token' });
-
-    user.password = await bcrypt.hash(password, 10);
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpires = undefined;
-    await user.save();
-
-    res.json({ message: 'Password has been reset. You can now log in with the new password.' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// password-reset routes removed
 
 module.exports = router;
