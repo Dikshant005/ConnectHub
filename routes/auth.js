@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const User = require('../models/user');
-const mailer = require('../utils/mailer');
+
 
 const router = express.Router();
 
@@ -23,37 +23,16 @@ router.post('/signup', async (req, res) => {
       return res.status(400).json({ error: 'Username or email already exists' });
     }
     const hashedPassword = await bcrypt.hash(password, 10);
-    const verifyToken = crypto.randomBytes(32).toString('hex');
-    
-    // send verification email BEFORE saving to DB
-    const verifyUrl = `${BASE_URL}/auth/verify/${verifyToken}`;
-    await mailer.sendVerifyEmail(email, username, verifyUrl);
-
-    // Only save user if email was sent successfully
-    const newUser = new User({ username, email, password: hashedPassword, verifyToken });
+    const newUser = new User({ username, email, password: hashedPassword, isVerified: true });
     await newUser.save();
-
-    res.status(201).json({ message: 'User created. Please check your email to verify the account.' });
+    res.status(201).json({ message: 'User created successfully.' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Verify email
-router.get('/verify/:token', async (req, res) => {
-  try {
-    const user = await User.findOne({ verifyToken: req.params.token });
-    if (!user) return res.status(400).json({ error: 'Invalid or expired verification token' });
 
-    user.isVerified = true;
-    user.verifyToken = undefined;
-    await user.save();
-    res.json({ message: 'Email verified successfully' });
-  } catch (err) {
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
 
 // Login - use email or username + password
 router.post('/login', async (req, res) => {
@@ -68,7 +47,7 @@ router.post('/login', async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(400).json({ error: 'Invalid credentials' });
 
-    if (!user.isVerified) return res.status(401).json({ error: 'Email not verified. Check your inbox.' });
+
 
     const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: '1h' });
     res.json({ token });
