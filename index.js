@@ -30,6 +30,7 @@ mongoose.connect(mongoUri)
 app.use('/auth', authRoutes);
 app.use('/meetings', authMiddleware, meetingRoutes);
 
+const server = http.createServer(app);
 // Socket.io Signaling Server
 const io = new Server(server, {
   cors: {
@@ -56,6 +57,6 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
