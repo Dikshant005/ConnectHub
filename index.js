@@ -8,8 +8,10 @@ require('dotenv').config();
 const app = express();
 
 // CORS configuration
-const FRONTEND_URL = '*';
-app.use(cors({ origin: FRONTEND_URL }));
+const FRONTEND_URL = "http://localhost:5173";
+app.use(cors({ origin: FRONTEND_URL,
+              credentials: true,
+ }));
 
 app.use(bodyParser.json());
 
