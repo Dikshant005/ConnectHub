@@ -2,6 +2,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const http = require('http');
+const { Server } = require('socket.io');
 const authRoutes = require('./routes/auth');
 const meetingRoutes = require("./routes/meeting")
 require('dotenv').config();
@@ -25,7 +27,32 @@ mongoose.connect(mongoUri)
   });
 
 app.use('/auth', authRoutes);
-app.use('/meetings', meetingRoutes);
+app.use('/meetings', authMiddleware, meetingRoutes);
+
+// Socket.io Signaling Server
+const io = new Server(server, {
+  cors: {
+    origin: FRONTEND_URL,
+    credentials: true,
+  },
+});
+
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+
+  socket.on('join-room', (roomId, userId) => {
+    socket.join(roomId);
+    socket.to(roomId).emit('user-connected', userId);
+
+    socket.on('signal', (toUserId, data) => {
+      io.to(toUserId).emit('signal', socket.id, data);
+    });
+
+    socket.on('disconnect', () => {
+      socket.to(roomId).emit('user-disconnected', userId);
+    });
+  });
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
