@@ -1,14 +1,25 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
+const cors = require('cors');
 const authRoutes = require('./routes/auth');
-require('dotenv').config();  
+require('dotenv').config();
 
 const app = express();
+
+// CORS configuration
+const FRONTEND_URL = '*';
+app.use(cors({ origin: FRONTEND_URL }));
+
 app.use(bodyParser.json());
 
 const mongoUri = process.env.MONGO_URI;
-mongoose.connect(mongoUri, console.log("DB connected"));
+mongoose.connect(mongoUri)
+  .then(() => console.log('DB connected'))
+  .catch(err => {
+    console.error('MongoDB Connection Error:', err.message);
+    process.exit(1);
+  });
 
 app.use('/auth', authRoutes);
 
