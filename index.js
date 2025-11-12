@@ -5,7 +5,8 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const authRoutes = require('./routes/auth');
-const meetingRoutes = require("./routes/meeting")
+const meetingRoutes = require("./routes/meeting");
+const authMiddleware = require('./middleware/authMiddleware');
 require('dotenv').config();
 
 const app = express();
