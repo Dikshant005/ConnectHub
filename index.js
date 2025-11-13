@@ -12,7 +12,7 @@ require('dotenv').config();
 const app = express();
 
 // CORS configuration
-const FRONTEND_URL = "http://localhost:5173";
+const FRONTEND_URL = "https://connect-hub-virid.vercel.app/"  || "http://localhost:5173";
 app.use(cors({ origin: FRONTEND_URL,
               credentials: true,
  }));
