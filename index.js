@@ -11,11 +11,14 @@ require('dotenv').config();
 
 const app = express();
 
-// CORS configuration
-const FRONTEND_URL = "https://connect-hub-virid.vercel.app/"  || "http://localhost:5173";
-app.use(cors({ origin: FRONTEND_URL,
-              credentials: true,
- }));
+// ✅ Fix: define CORS origins properly
+const FRONTEND_URL =
+  process.env.FRONTEND_URL || "https://connect-hub-virid.vercel.app";
+
+app.use(cors({
+  origin: [FRONTEND_URL, "http://localhost:5173"], // allow both
+  credentials: true,
+}));
 
 app.use(bodyParser.json());
 
@@ -31,10 +34,11 @@ app.use('/auth', authRoutes);
 app.use('/meetings', authMiddleware, meetingRoutes);
 
 const server = http.createServer(app);
-// Socket.io Signaling Server
+
+// ✅ Same fix for Socket.io
 const io = new Server(server, {
   cors: {
-    origin: FRONTEND_URL,
+    origin: [FRONTEND_URL, "http://localhost:5173"],
     credentials: true,
   },
 });
