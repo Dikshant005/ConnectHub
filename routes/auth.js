@@ -6,7 +6,7 @@ const User = require('../models/user');
 
 const router = express.Router();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'SECRET_KEY';
+const JWT_SECRET = 'secret';
 
 // Signup - requires username, email, password
 router.post('/signup', async (req, res) => {
@@ -48,7 +48,10 @@ router.post('/login', async (req, res) => {
 
 
     const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: '1h' });
-    res.json({ token });
+    res.json({
+      token,
+      userId: user._id
+    });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
