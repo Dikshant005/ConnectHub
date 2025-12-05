@@ -102,5 +102,110 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
   }
 });
 
+// ---------- PARTICIPANT LEAVE MEETING ----------
+router.post('/:id/leave', authMiddleware, async (req, res) => {
+  console.log("➡️ LEAVE MEETING API HIT");
+
+  try {
+    console.log("📌 Meeting ID:", req.params.id);
+    console.log("👤 User:", req.user);
+
+    const meeting = await Meeting.findById(req.params.id);
+    if (!meeting) {
+      console.log("❌ Meeting not found");
+      return res.status(404).json({ error: 'Meeting not found' });
+    }
+
+    // Check if user is participant
+    const userIdStr = req.user.userId.toString();
+    if (!meeting.participants.map(p => p.toString()).includes(userIdStr)) {
+      console.log("❌ User not a participant");
+      return res.status(400).json({ error: 'Not a participant' });
+    }
+
+    // Remove user from participants
+    meeting.participants = meeting.participants.filter(p => p.toString() !== userIdStr);
+    await meeting.save();
+
+    console.log(`✅ User ${req.user.userId} left meeting ${meeting._id}`);
+    console.log(`📊 Remaining participants: ${meeting.participants.length}`);
+
+    // Notify room about user leaving (Socket.IO)
+    if (req.io) {
+      const roomId = meeting.roomId;
+      req.io.to(roomId).emit('user-left', {
+        userId: req.user.userId,
+        roomId,
+        participantsCount: meeting.participants.length
+      });
+      console.log(`📤 Broadcasted user-left to room ${roomId}`);
+    }
+
+    // If last participant and not creator, or creator leaves with no one left
+    if (meeting.participants.length === 0 && meeting.creator.toString() === userIdStr) {
+      console.log("🗑️ Deleting empty meeting created by leaver");
+      await Meeting.deleteOne({ _id: meeting._id });
+    }
+
+    res.json({ 
+      message: 'Left meeting successfully',
+      roomId: meeting.roomId,
+      participantsCount: meeting.participants.length
+    });
+
+  } catch (err) {
+    console.log("💥 Error leaving meeting:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------- END MEETING (Creator only) ----------
+router.delete('/:id/end', authMiddleware, async (req, res) => {
+  console.log("➡️ END MEETING API HIT");
+
+  try {
+    console.log("📌 Meeting ID:", req.params.id);
+    console.log("👤 User:", req.user);
+
+    const meeting = await Meeting.findById(req.params.id);
+    if (!meeting) {
+      console.log("❌ Meeting not found");
+      return res.status(404).json({ error: 'Meeting not found' });
+    }
+
+    if (meeting.creator.toString() !== req.user.userId) {
+      console.log("❌ Unauthorized: Not creator");
+      return res.status(403).json({ error: 'Only creator can end meeting' });
+    }
+
+    console.log("✅ Creator authorized. Ending meeting:", meeting.roomId);
+
+    const roomId = meeting.roomId;
+
+    // Delete meeting
+    await Meeting.deleteOne({ _id: meeting._id });
+
+    // Notify all participants
+    if (req.io) {
+      req.io.to(roomId).emit('meeting-ended', {
+        roomId,
+        endedBy: req.user.userId,
+        message: 'Meeting has been ended by creator'
+      });
+      console.log(`📤 Broadcasted meeting-ended to room ${roomId}`);
+    }
+
+    console.log("🎉 Meeting ended successfully");
+
+    res.json({ 
+      message: 'Meeting ended successfully',
+      roomId 
+    });
+
+  } catch (err) {
+    console.log("💥 Error ending meeting:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 module.exports = router;
