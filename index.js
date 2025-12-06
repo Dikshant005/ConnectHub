@@ -9,7 +9,7 @@ const meetingRoutes = require("./routes/meeting");
 const authMiddleware = require('./middleware/authMiddleware');
 require('dotenv').config();
 const Message = require('./models/message');
-const chatRoutes = require('./routes/chat');
+const chatRoutes = require('./routes/chat.js');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // Initialize AI (Get API Key from https://aistudio.google.com/)
