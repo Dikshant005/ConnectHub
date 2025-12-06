@@ -8,6 +8,14 @@ const authRoutes = require('./routes/auth');
 const meetingRoutes = require("./routes/meeting");
 const authMiddleware = require('./middleware/authMiddleware');
 require('dotenv').config();
+const Message = require('./models/message');
+const chatRoutes = require('./routes/chat');
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+// Initialize AI (Get API Key from https://aistudio.google.com/)
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
 
 const app = express();
 
@@ -21,6 +29,11 @@ app.use(cors({
 }));
 
 app.use(bodyParser.json());
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
+app.use('/chat', chatRoutes);
 
 const mongoUri = process.env.MONGO_URI;
 mongoose.connect(mongoUri)
@@ -42,8 +55,10 @@ const io = new Server(server, {
     credentials: true,
   },
 });
+
 const activeConnections = new Map(); // socketId -> { roomId, userId }
 const userToSocket = new Map();
+const roomScreenShares = new Map(); // ✅ NEW: roomId -> userId (Tracks who is sharing)
 
 io.on('connection', (socket) => {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -79,6 +94,8 @@ io.on('connection', (socket) => {
     socket.to(roomId).emit('user-connected', userId);
     console.log(`📤 Notified room ${roomId} about new user ${userId}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+    
   });
 
   // ✅ CORRECT: Define listeners at connection level
@@ -125,6 +142,104 @@ io.on('connection', (socket) => {
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
   });
 
+  
+  socket.on('send-chat-message', async (data) => {
+    const { roomId, senderId, senderName, message } = data;
+    
+    console.log(`\n💬 CHAT MESSAGE in Room ${roomId}`);
+    console.log(`   From: ${senderName} (${senderId})`);
+    console.log(`   Message: ${message}`);
+
+    try {
+      // 1. Save to Database
+      const newMessage = new Message({
+        meetingId: roomId,
+        senderId,
+        senderName,
+        text: message
+      });
+      await newMessage.save();
+
+      // 2. Broadcast to EVERYONE in the room (including sender)
+      // We use io.to() instead of socket.to() so the sender also receives 
+      // the confirmation that the server processed it.
+      io.to(roomId).emit('receive-chat-message', newMessage);
+      
+    } catch (err) {
+      console.error('❌ Error saving/sending message:', err);
+    }
+  });
+
+  // Auto complete feature
+  socket.on('request-autocomplete', async (currentText) => {
+    if (!currentText || currentText.length < 5) return;
+
+    try {
+      const prompt = `
+        You are an autocomplete engine.
+        User typed: "${currentText}"
+        Return ONLY the suffix to complete the sentence logically.
+        No quotes, no explanations.
+        Example: "How a" -> "re you?"
+      `;
+
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const suggestion = response.text().trim();
+
+      if (suggestion) {
+        socket.emit('receive-autocomplete', { 
+          original: currentText, 
+          suggestion: suggestion 
+        });
+      }
+    } catch (err) {
+      // Fail silently
+    }
+  });
+  // 
+
+  // ----------------------------------------------------
+  // ✅ NEW: SCREEN SHARE LOGIC
+  // ----------------------------------------------------
+
+  socket.on('start-screen-share', ({ roomId }) => {
+    console.log(`\n🖥️ START SCREEN SHARE Request`);
+    console.log(`   Room: ${roomId}, User: ${currentUserId}`);
+
+    // Check if someone else is already sharing
+    const currentSharer = roomScreenShares.get(roomId);
+    
+    if (currentSharer && currentSharer !== currentUserId) {
+      // Reject if someone else is sharing
+      socket.emit('screen-share-error', { message: 'Someone is already sharing screen' });
+      console.log(`❌ Rejected: User ${currentSharer} is already sharing`);
+      return;
+    }
+
+    // Mark this user as the sharer
+    roomScreenShares.set(roomId, currentUserId);
+
+    // Notify others
+    socket.to(roomId).emit('user-started-screen-share', currentUserId);
+    console.log(`✅ User ${currentUserId} started screen sharing in room ${roomId}`);
+  });
+
+  socket.on('stop-screen-share', ({ roomId }) => {
+    console.log(`\n🛑 STOP SCREEN SHARE Request`);
+    console.log(`   Room: ${roomId}, User: ${currentUserId}`);
+
+    const currentSharer = roomScreenShares.get(roomId);
+
+    if (currentSharer === currentUserId) {
+      roomScreenShares.delete(roomId);
+      socket.to(roomId).emit('user-stopped-screen-share', currentUserId);
+      console.log(`✅ Screen share stopped in room ${roomId}`);
+    }
+  });
+
+  // ----------------------------------------------------
+
   socket.on('disconnect', () => {
     console.log('\n🔴 CLIENT DISCONNECTED');
     console.log(`   Socket ID: ${socket.id}`);
@@ -133,6 +248,13 @@ io.on('connection', (socket) => {
     console.log(`   User ID: ${currentUserId || 'none'}`);
     
     if (currentRoom && currentUserId) {
+      // ✅ NEW: Handle screen share disconnect
+      if (roomScreenShares.get(currentRoom) === currentUserId) {
+        console.log(`⚠️ Screen sharer disconnected. Clearing screen share status.`);
+        roomScreenShares.delete(currentRoom);
+        socket.to(currentRoom).emit('user-stopped-screen-share', currentUserId);
+      }
+
       socket.to(currentRoom).emit('user-disconnected', currentUserId);
       console.log(`📤 Notified room ${currentRoom} about user ${currentUserId} leaving`);
       
@@ -149,7 +271,7 @@ io.on('connection', (socket) => {
 
   // ✅ Log any other events for debugging
   socket.onAny((eventName, ...args) => {
-    if (!['join-room', 'signal', 'disconnect'].includes(eventName)) {
+    if (!['join-room', 'signal', 'disconnect', 'send-chat-message'].includes(eventName)) {
       console.log(`\n⚡ UNKNOWN EVENT: ${eventName}`);
       console.log(`   Socket ID: ${socket.id}`);
       console.log(`   Args:`, args);

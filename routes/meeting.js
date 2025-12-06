@@ -207,5 +207,20 @@ router.delete('/:id/end', authMiddleware, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+// Load meet chats
+router.get('/:roomId', authMiddleware, async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    
+    // Fetch messages sorted by time
+    const messages = await Message.find({ meetingId: roomId })
+      .sort({ timestamp: 1 }); // Oldest first
+      
+    res.json(messages);
+  } catch (err) {
+    console.error("Error fetching chat:", err);
+    res.status(500).json({ error: 'Could not load chat history' });
+  }
+});
 
 module.exports = router;
