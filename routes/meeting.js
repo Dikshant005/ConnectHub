@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const mongoose = require('mongoose'); // <--- Added this to validate IDs
+const mongoose = require('mongoose');
 const Meeting = require("../models/meeting");
 const authMiddleware = require('../middleware/authMiddleware');
 
@@ -43,14 +43,13 @@ router.post('/', authMiddleware, async (req, res) => {
 router.post('/:id/join', authMiddleware, async (req, res) => {
   console.log("➡️ JOIN MEETING API HIT");
   try {
-    // 1. Determine what ID we are working with
     const roomInput = req.body.room || req.body.roomId || req.params.id;
     let meeting;
 
-    // 2. Try finding by 6-digit Room ID first
+    // 1. Try finding by 6-digit Room ID first
     meeting = await Meeting.findOne({ roomId: roomInput });
 
-    // 3. If not found, and it looks like a Mongo ID, try finding by _id
+    // 2. If not found, check Mongo ID
     if (!meeting && mongoose.Types.ObjectId.isValid(roomInput)) {
       meeting = await Meeting.findById(roomInput);
     }
@@ -59,7 +58,6 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Meeting not found' });
     }
 
-    // 4. Check logic
     if (meeting.participants.includes(req.user.userId)) {
       return res.status(400).json({ error: 'Already joined' });
     }
@@ -76,42 +74,39 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
   }
 });
 
-// ---------- PARTICIPANT LEAVE MEETING (UPDATED) ----------
+// ---------- PARTICIPANT LEAVE MEETING (FIXED) ----------
 router.post('/:id/leave', authMiddleware, async (req, res) => {
   console.log("➡️ LEAVE MEETING API HIT");
 
   try {
-    const { id } = req.params; // Can be roomId OR _id
+    const { id } = req.params; 
     let meeting;
 
-    // 1. Try finding by 6-digit Room ID first
     meeting = await Meeting.findOne({ roomId: id });
-
-    // 2. If not found, check if it's a valid Mongo Object ID
     if (!meeting && mongoose.Types.ObjectId.isValid(id)) {
       meeting = await Meeting.findById(id);
     }
 
+    // ✅ CRITICAL FIX 1: If meeting is missing, it was likely ended by host. 
+    // Return SUCCESS (not 404) so the app doesn't show an error.
     if (!meeting) {
-      console.log("❌ Meeting not found with ID:", id);
-      return res.status(404).json({ error: 'Meeting not found' });
+      console.log("⚠️ Meeting not found (already ended). Treating as success.");
+      return res.json({ message: 'Meeting already ended' }); 
     }
 
-    // 3. Check if user is participant
     const userIdStr = req.user.userId.toString();
     const isParticipant = meeting.participants.some(p => p.toString() === userIdStr);
 
     if (!isParticipant) {
-      return res.status(400).json({ error: 'Not a participant' });
+      // Just return success to keep UI clean
+      return res.json({ message: 'User was not in meeting' });
     }
 
-    // 4. Remove user
     meeting.participants = meeting.participants.filter(p => p.toString() !== userIdStr);
     await meeting.save();
 
     console.log(`✅ User left meeting ${meeting.roomId}`);
 
-    // 5. Notify Socket Room
     if (req.io) {
       req.io.to(meeting.roomId).emit('user-left', {
         userId: req.user.userId,
@@ -120,7 +115,6 @@ router.post('/:id/leave', authMiddleware, async (req, res) => {
       });
     }
 
-    // 6. Delete if empty (and creator left)
     if (meeting.participants.length === 0 && meeting.creator.toString() === userIdStr) {
       console.log("🗑️ Deleting empty meeting");
       await Meeting.deleteOne({ _id: meeting._id });
@@ -137,43 +131,51 @@ router.post('/:id/leave', authMiddleware, async (req, res) => {
   }
 });
 
-// ---------- END MEETING (Creator only) (UPDATED) ----------
+// ---------- END MEETING (FIXED) ----------
 router.delete('/:id/end', authMiddleware, async (req, res) => {
   console.log("➡️ END MEETING API HIT");
 
   try {
-    const { id } = req.params; // Can be roomId OR _id
+    const { id } = req.params;
     let meeting;
 
-    // 1. Search by Room ID
     meeting = await Meeting.findOne({ roomId: id });
-
-    // 2. Search by Mongo ID
     if (!meeting && mongoose.Types.ObjectId.isValid(id)) {
       meeting = await Meeting.findById(id);
     }
 
     if (!meeting) {
-      return res.status(404).json({ error: 'Meeting not found' });
+      // If it's already gone, just return success
+      return res.json({ message: 'Meeting already ended' });
     }
 
-    // 3. Check Creator
     if (meeting.creator.toString() !== req.user.userId) {
       return res.status(403).json({ error: 'Only creator can end meeting' });
     }
 
     const roomId = meeting.roomId;
+    const mongoId = meeting._id.toString(); // ✅ Capture Mongo ID before deleting
 
-    // 4. Delete
+    // Delete
     await Meeting.deleteOne({ _id: meeting._id });
 
-    // 5. Notify Socket
+    // ✅ CRITICAL FIX 2: Broadcast to BOTH rooms to ensure everyone hears it
     if (req.io) {
+      // 1. Notify 6-digit room
       req.io.to(roomId).emit('meeting-ended', {
         roomId,
         endedBy: req.user.userId,
         message: 'Meeting has been ended by creator'
       });
+
+      // 2. Notify Mongo ID room (Backup for mismatched users)
+      req.io.to(mongoId).emit('meeting-ended', {
+        roomId,
+        endedBy: req.user.userId,
+        message: 'Meeting has been ended by creator'
+      });
+      
+      console.log(`📤 Broadcasted END to ${roomId} AND ${mongoId}`);
     }
 
     console.log(`🛑 Meeting ${roomId} ended by creator`);
