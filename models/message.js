@@ -7,5 +7,6 @@ const messageSchema = new mongoose.Schema({
   text: { type: String, required: true },
   timestamp: { type: Date, default: Date.now },
 });
+messageSchema.index({ meetingId: 1, timestamp: 1 });
 
 module.exports = mongoose.model('Message', messageSchema);

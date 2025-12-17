@@ -9,8 +9,7 @@ router.get('/:roomId', authMiddleware, async (req, res) => {
     const { roomId } = req.params;
     
     // Fetch messages sorted by time (Oldest first)
-    const messages = await Message.find({ meetingId: roomId })
-      .sort({ timestamp: 1 }); 
+    const messages = await Message.find({ meetingId: roomId }).sort({ timestamp: 1 });
       
     res.json(messages);
   } catch (err) {

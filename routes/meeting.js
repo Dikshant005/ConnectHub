@@ -83,6 +83,39 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ---------- GET PARTICIPANTS ----------
+// Allows frontend to fetch all participants in a meeting by roomId or mongoId
+router.get('/:id/participants', authMiddleware, async (req, res) => {
+  console.log("➡️ GET PARTICIPANTS API HIT");
+
+  try {
+    const { id } = req.params;
+    let meeting;
+
+    // try roomId first
+    meeting = await Meeting.findOne({ roomId: id }).populate('participants', 'username email');
+
+    // fallback to Mongo ObjectId
+    if (!meeting && mongoose.Types.ObjectId.isValid(id)) {
+      meeting = await Meeting.findById(id).populate('participants', 'username email');
+    }
+
+    if (!meeting) {
+      return res.status(404).json({ error: 'Meeting not found' });
+    }
+
+    return res.json({
+      roomId: meeting.roomId,
+      meetingId: meeting._id,
+      participants: meeting.participants,
+      participantsCount: meeting.participants.length,
+    });
+  } catch (err) {
+    console.error('Participants Error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
 // ---------- PARTICIPANT LEAVE MEETING (FIXED) ----------
 router.post('/:id/leave', authMiddleware, async (req, res) => {
   console.log("➡️ LEAVE MEETING API HIT");
