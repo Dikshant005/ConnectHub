@@ -71,38 +71,42 @@ io.on('connection', (socket) => {
   let currentRoom = null;
   let currentUserId = null;
 
-  socket.on('join-room', (roomId, userId) => {
-    // 🔍 1. CHECK ROOM SIZE (The Bouncer Logic)
+ socket.on('join-room', (roomId, userId) => {
+    // 🔍 1. CHECK IF ALREADY JOINED (Idempotency Fix)
+    // If this specific socket is already in the room, ignore the "Full" check.
+    if (socket.rooms.has(roomId)) {
+        console.log(`ℹ️ Socket ${socket.id} is already in room ${roomId}. Skipping join logic.`);
+        return; 
+    }
+
+    // 🔍 2. CHECK ROOM SIZE (The Bouncer Logic)
     const room = io.sockets.adapter.rooms.get(roomId);
     const size = room ? room.size : 0;
 
-    // 🛑 2. REJECT IF FULL
+    // 🛑 3. REJECT IF FULL (Limit to 2)
     if (size >= 2) {
       console.log(`\n🚫 REJECTED: Room ${roomId} is full (Size: ${size}). User: ${userId}`);
-      socket.emit('room-full'); // Notify client to redirect
-      return; // Stop execution here
+      socket.emit('room-full');
+      return;
     }
 
-    // ✅ 3. ALLOW ENTRY (Existing Logic)
+    // ✅ 4. ALLOW ENTRY
     console.log('\n📥 JOIN-ROOM EVENT RECEIVED');
-    console.log(` Socket ID: ${socket.id}`);
-    console.log(` Room ID: ${roomId}`);
-    console.log(` User ID: ${userId}`);
+    console.log(`   Socket ID: ${socket.id}`);
+    console.log(`   Room ID: ${roomId}`);
+    console.log(`   User ID: ${userId}`);
     
     currentRoom = roomId;
     currentUserId = userId;
     
-    // Track connection
     activeConnections.set(socket.id, { roomId, userId });
     userToSocket.set(userId, socket.id); 
     socket.join(roomId);
     console.log(`✅ User ${userId} joined room ${roomId}`);
     
-    // Log new room size
     const newSize = io.sockets.adapter.rooms.get(roomId)?.size || 0;
-    console.log(`   Room size: ${newSize} participant(s)`);
+    console.log(`   Room size: ${newSize} participant(s)`);
     
-    // Notify others in room
     socket.to(roomId).emit('user-connected', userId);
     console.log(`📤 Notified room ${roomId} about new user ${userId}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
