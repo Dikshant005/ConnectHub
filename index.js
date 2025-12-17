@@ -285,7 +285,7 @@ io.on('connection', (socket) => {
 
   // ✅ Log any other events for debugging
   socket.onAny((eventName, ...args) => {
-    if (!['join-room', 'signal', 'disconnect', 'send-chat-message'].includes(eventName)) {
+    if (!['join-room', 'signal', 'disconnect', 'send-chat-message','ice-candidate'].includes(eventName)) {
       console.log(`\n⚡ UNKNOWN EVENT: ${eventName}`);
       console.log(`   Socket ID: ${socket.id}`);
       console.log(`   Args:`, args);
