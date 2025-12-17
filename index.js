@@ -72,30 +72,40 @@ io.on('connection', (socket) => {
   let currentUserId = null;
 
   socket.on('join-room', (roomId, userId) => {
+    // 🔍 1. CHECK ROOM SIZE (The Bouncer Logic)
+    const room = io.sockets.adapter.rooms.get(roomId);
+    const size = room ? room.size : 0;
+
+    // 🛑 2. REJECT IF FULL
+    if (size >= 2) {
+      console.log(`\n🚫 REJECTED: Room ${roomId} is full (Size: ${size}). User: ${userId}`);
+      socket.emit('room-full'); // Notify client to redirect
+      return; // Stop execution here
+    }
+
+    // ✅ 3. ALLOW ENTRY (Existing Logic)
     console.log('\n📥 JOIN-ROOM EVENT RECEIVED');
-    console.log(`   Socket ID: ${socket.id}`);
-    console.log(`   Room ID: ${roomId}`);
-    console.log(`   User ID: ${userId}`);
+    console.log(` Socket ID: ${socket.id}`);
+    console.log(` Room ID: ${roomId}`);
+    console.log(` User ID: ${userId}`);
     
     currentRoom = roomId;
     currentUserId = userId;
     
     // Track connection
     activeConnections.set(socket.id, { roomId, userId });
-    userToSocket.set(userId, socket.id); // ✅ Map userId to socketId
+    userToSocket.set(userId, socket.id); 
     socket.join(roomId);
     console.log(`✅ User ${userId} joined room ${roomId}`);
     
-    // Get room info
-    const roomSize = io.sockets.adapter.rooms.get(roomId)?.size || 0;
-    console.log(`   Room size: ${roomSize} participant(s)`);
+    // Log new room size
+    const newSize = io.sockets.adapter.rooms.get(roomId)?.size || 0;
+    console.log(`   Room size: ${newSize} participant(s)`);
     
     // Notify others in room
     socket.to(roomId).emit('user-connected', userId);
     console.log(`📤 Notified room ${roomId} about new user ${userId}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-
-    
   });
 
   // ✅ CORRECT: Define listeners at connection level
