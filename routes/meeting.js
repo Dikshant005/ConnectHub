@@ -58,10 +58,20 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Meeting not found' });
     }
 
-    if (meeting.participants.includes(req.user.userId)) {
-      return res.status(400).json({ error: 'Already joined' });
+    // ✅ FIX: Check database count before adding!
+    // If user is NOT already in the list AND list size is >= 2, reject them.
+    if (!meeting.participants.includes(req.user.userId) && meeting.participants.length >= 2) {
+        console.log(`⛔ Blocked user ${req.user.userId} from joining full room ${meeting.roomId}`);
+        return res.status(403).json({ message: 'Meeting is full (Max 2 people)' });
     }
 
+    // 3. Check if already joined (Idempotency)
+    if (meeting.participants.includes(req.user.userId)) {
+      // It's okay to return 200 here so the frontend proceeds to the meeting page
+      return res.status(200).json({ message: 'Already joined', meeting });
+    }
+
+    // 4. Add user to DB
     meeting.participants.push(req.user.userId);
     await meeting.save();
 
@@ -73,7 +83,6 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 // ---------- PARTICIPANT LEAVE MEETING (FIXED) ----------
 router.post('/:id/leave', authMiddleware, async (req, res) => {
   console.log("➡️ LEAVE MEETING API HIT");
