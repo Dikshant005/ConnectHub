@@ -133,20 +133,25 @@ io.on('connection', (socket) => {
   });
 
   socket.on('ice-candidate', (data) => {
-    const { toUserId, candidate } = data;
+    const { toUserId,fromUserId, candidate } = data;
     
     console.log('\n🧊 ICE CANDIDATE RECEIVED');
     console.log(`   From Socket: ${socket.id}`);
     console.log(`   From User: ${currentUserId}`);
     console.log(`   To User: ${toUserId}`);
+
+    if(!toUserId || !candidate){
+      console.error('❌ Invalid ICE candidate data');
+      return;
+    }
     
      const toSocketId = userToSocket.get(toUserId);
     
     if (toSocketId) {
       console.log(`   To Socket: ${toSocketId}`);
       io.to(toSocketId).emit('ice-candidate', {
-        fromSocketId: socket.id,
-        fromUserId: currentUserId,
+        // fromSocketId: socket.id,
+        fromUserId: fromUserId || currentUserId,
         candidate: candidate
       });
       console.log(`📤 ICE candidate forwarded to socket ${toSocketId} (user ${toUserId})`);
@@ -255,6 +260,9 @@ io.on('connection', (socket) => {
   // ----------------------------------------------------
 
   socket.on('disconnect', () => {
+    if(currentUserId){
+      userToSocket.delete(currentUserId);
+    }
     console.log('\n🔴 CLIENT DISCONNECTED');
     console.log(`   Socket ID: ${socket.id}`);
     console.log(`   Time: ${new Date().toISOString()}`);
