@@ -39,7 +39,7 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 });
 
-// ---------- JOIN MEETING ----------
+// ---------- JOIN MEETING (FIXED WITH SOCKET) ----------
 router.post('/:id/join', authMiddleware, async (req, res) => {
   console.log("➡️ JOIN MEETING API HIT");
   try {
@@ -61,8 +61,8 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
     // ✅ FIX: Check database count before adding!
     // If user is NOT already in the list AND list size is >= 2, reject them.
     if (!meeting.participants.includes(req.user.userId) && meeting.participants.length >= 2) {
-        console.log(`⛔ Blocked user ${req.user.userId} from joining full room ${meeting.roomId}`);
-        return res.status(403).json({ message: 'Meeting is full (Max 2 people)' });
+      console.log(`⛔ Blocked user ${req.user.userId} from joining full room ${meeting.roomId}`);
+      return res.status(403).json({ message: 'Meeting is full (Max 2 people)' });
     }
 
     // 3. Check if already joined (Idempotency)
@@ -74,6 +74,16 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
     // 4. Add user to DB
     meeting.participants.push(req.user.userId);
     await meeting.save();
+
+    // ✅ CRITICAL ADDITION: Notify room that someone joined
+    if (req.io) {
+      req.io.to(meeting.roomId).emit('user-joined', {
+        userId: req.user.userId,
+        roomId: meeting.roomId,
+        participantsCount: meeting.participants.length
+      });
+      console.log(`📡 Emitted user-joined to room ${meeting.roomId}`);
+    }
 
     console.log(`🎉 User joined meeting: ${meeting.roomId}`);
     res.json({ message: 'Joined meeting', meeting });
@@ -121,7 +131,7 @@ router.post('/:id/leave', authMiddleware, async (req, res) => {
   console.log("➡️ LEAVE MEETING API HIT");
 
   try {
-    const { id } = req.params; 
+    const { id } = req.params;
     let meeting;
 
     meeting = await Meeting.findOne({ roomId: id });
@@ -133,7 +143,7 @@ router.post('/:id/leave', authMiddleware, async (req, res) => {
     // Return SUCCESS (not 404) so the app doesn't show an error.
     if (!meeting) {
       console.log("⚠️ Meeting not found (already ended). Treating as success.");
-      return res.json({ message: 'Meeting already ended' }); 
+      return res.json({ message: 'Meeting already ended' });
     }
 
     const userIdStr = req.user.userId.toString();
@@ -216,7 +226,7 @@ router.delete('/:id/end', authMiddleware, async (req, res) => {
         endedBy: req.user.userId,
         message: 'Meeting has been ended by creator'
       });
-      
+
       console.log(`📤 Broadcasted END to ${roomId} AND ${mongoId}`);
     }
 
