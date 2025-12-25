@@ -99,6 +99,24 @@ io.on('connection', (socket) => {
     socket.to(roomId).emit('user-connected', userId);
   });
 
+  /* ---------------- MIC STATUS ---------------- */
+
+  // Client emits: socket.emit('mic-toggle', { isMicOn: true/false })
+  // Server broadcasts to room: 'peer-mic-state' with { userId, isMicOn }
+  socket.on('mic-toggle', ({ isMicOn } = {}) => {
+    const meta = socketMeta.get(socket.id);
+    if (!meta) return;
+
+    if (typeof isMicOn !== 'boolean') return;
+
+    const { roomId, userId } = meta;
+
+    socket.to(roomId).emit('peer-mic-state', {
+      userId,
+      isMicOn,
+    });
+  });
+
   /* ---------------- SIGNAL ---------------- */
 
   socket.on('signal', (toUserId, data) => {
