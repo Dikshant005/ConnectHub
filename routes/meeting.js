@@ -32,7 +32,13 @@ router.post('/', authMiddleware, async (req, res) => {
 
     await meeting.save();
     console.log("🎉 Meeting created:", roomId);
-    res.status(201).json(meeting);
+
+    const meetingObj = meeting.toObject();
+    meetingObj.isHost = true;
+    meetingObj.hostUserId = meeting.creator.toString();
+
+    // Return the meeting object directly to avoid breaking existing frontend code.
+    res.status(201).json(meetingObj);
 
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -68,25 +74,47 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
     // 3. Check if already joined (Idempotency)
     if (meeting.participants.includes(req.user.userId)) {
       // It's okay to return 200 here so the frontend proceeds to the meeting page
-      return res.status(200).json({ message: 'Already joined', meeting });
+      const isHost = meeting.creator.toString() === req.user.userId;
+      const meetingObj = meeting.toObject();
+      meetingObj.isHost = isHost;
+
+      return res.status(200).json({
+        message: 'Already joined',
+        meeting: meetingObj,
+        isHost,
+        hostUserId: meeting.creator.toString(),
+      });
     }
 
     // 4. Add user to DB
     meeting.participants.push(req.user.userId);
     await meeting.save();
 
+    const joinerIsHost = meeting.creator.toString() === req.user.userId;
+
     // ✅ CRITICAL ADDITION: Notify room that someone joined
     if (req.io) {
       req.io.to(meeting.roomId).emit('user-joined', {
         userId: req.user.userId,
         roomId: meeting.roomId,
-        participantsCount: meeting.participants.length
+        participantsCount: meeting.participants.length,
+        isHost: joinerIsHost,
+        hostUserId: meeting.creator.toString(),
       });
       console.log(`📡 Emitted user-joined to room ${meeting.roomId}`);
     }
 
     console.log(`🎉 User joined meeting: ${meeting.roomId}`);
-    res.json({ message: 'Joined meeting', meeting });
+
+    const meetingObj = meeting.toObject();
+    meetingObj.isHost = joinerIsHost;
+
+    res.json({
+      message: 'Joined meeting',
+      meeting: meetingObj,
+      isHost: joinerIsHost,
+      hostUserId: meeting.creator.toString(),
+    });
 
   } catch (err) {
     console.error("Join Error:", err.message);
@@ -104,22 +132,32 @@ router.get('/:id/participants', authMiddleware, async (req, res) => {
     let meeting;
 
     // try roomId first
-    meeting = await Meeting.findOne({ roomId: id }).populate('participants', 'username email');
+    meeting = await Meeting.findOne({ roomId: id })
+      .populate('participants', 'username email')
+      .populate('creator', 'username email');
 
     // fallback to Mongo ObjectId
     if (!meeting && mongoose.Types.ObjectId.isValid(id)) {
-      meeting = await Meeting.findById(id).populate('participants', 'username email');
+      meeting = await Meeting.findById(id)
+        .populate('participants', 'username email')
+        .populate('creator', 'username email');
     }
 
     if (!meeting) {
       return res.status(404).json({ error: 'Meeting not found' });
     }
 
+    const hostUserId = meeting.creator?._id ? meeting.creator._id.toString() : meeting.creator?.toString();
+    const isHost = hostUserId ? hostUserId === req.user.userId : false;
+
     return res.json({
       roomId: meeting.roomId,
       meetingId: meeting._id,
       participants: meeting.participants,
       participantsCount: meeting.participants.length,
+      hostUserId,
+      hostUser: meeting.creator,
+      isHost,
     });
   } catch (err) {
     console.error('Participants Error:', err.message);

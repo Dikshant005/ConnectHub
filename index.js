@@ -18,6 +18,10 @@ const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 const app = express();
 
+// Will be initialized after the HTTP server is created.
+// We attach it to req/app so routes can emit socket events.
+let io;
+
 const FRONTEND_URL =
   process.env.FRONTEND_URL || "https://connect-hub-virid.vercel.app";
 
@@ -27,6 +31,14 @@ app.use(cors({
 }));
 
 app.use(bodyParser.json());
+
+// Make Socket.IO available inside routes as `req.io`.
+// Note: `io` is assigned before server starts listening.
+app.use((req, _res, next) => {
+  req.io = io;
+  next();
+});
+
 app.use('/chat', chatRoutes);
 app.use('/auth', authRoutes);
 app.use('/meetings', authMiddleware, meetingRoutes);
@@ -40,12 +52,15 @@ mongoose.connect(mongoUri)
   });
 
 const server = http.createServer(app);
-const io = new Server(server, {
+io = new Server(server, {
   cors: {
     origin: [FRONTEND_URL, "http://localhost:5173"],
     credentials: true,
   },
 });
+
+// Also expose through app for any future access pattern.
+app.set('io', io);
 
 /* ======================================================
    ✅ SINGLE SOURCE OF TRUTH (IMPORTANT)
