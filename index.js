@@ -47,22 +47,12 @@ const io = new Server(server, {
   },
 });
 
-/* ======================================================
-   ✅ SINGLE SOURCE OF TRUTH (IMPORTANT)
-====================================================== */
 
 const roomUsers = new Map(); 
-// roomId -> Map<userId, socketId>
 
 const socketMeta = new Map(); 
-// socketId -> { roomId, userId }
 
 const roomScreenShares = new Map();
-// roomId -> userId
-
-/* ======================================================
-   SOCKET LOGIC
-====================================================== */
 
 io.on('connection', (socket) => {
   console.log('🟢 Connected:', socket.id);
@@ -218,9 +208,6 @@ io.on('connection', (socket) => {
   });
 });
 
-/* ======================================================
-   SERVER START
-====================================================== */
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, "0.0.0.0", () => {

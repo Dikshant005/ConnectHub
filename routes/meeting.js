@@ -39,7 +39,7 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 });
 
-// ---------- JOIN MEETING (FIXED WITH SOCKET) ----------
+// ---------- JOIN MEETING ----------
 router.post('/:id/join', authMiddleware, async (req, res) => {
   console.log("➡️ JOIN MEETING API HIT");
   try {
@@ -57,17 +57,13 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
     if (!meeting) {
       return res.status(404).json({ error: 'Meeting not found' });
     }
-
-    // ✅ FIX: Check database count before adding!
-    // If user is NOT already in the list AND list size is >= 2, reject them.
     if (!meeting.participants.includes(req.user.userId) && meeting.participants.length >= 2) {
-      console.log(`⛔ Blocked user ${req.user.userId} from joining full room ${meeting.roomId}`);
+      console.log(`Blocked user ${req.user.userId} from joining full room ${meeting.roomId}`);
       return res.status(403).json({ message: 'Meeting is full (Max 2 people)' });
     }
 
     // 3. Check if already joined (Idempotency)
     if (meeting.participants.includes(req.user.userId)) {
-      // It's okay to return 200 here so the frontend proceeds to the meeting page
       return res.status(200).json({ message: 'Already joined', meeting });
     }
 
@@ -75,7 +71,7 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
     meeting.participants.push(req.user.userId);
     await meeting.save();
 
-    // ✅ CRITICAL ADDITION: Notify room that someone joined
+    // Notify room that someone joined
     if (req.io) {
       req.io.to(meeting.roomId).emit('user-joined', {
         userId: req.user.userId,
@@ -126,7 +122,7 @@ router.get('/:id/participants', authMiddleware, async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
-// ---------- PARTICIPANT LEAVE MEETING (FIXED) ----------
+// ---------- PARTICIPANT LEAVE MEETING ----------
 router.post('/:id/leave', authMiddleware, async (req, res) => {
   console.log("➡️ LEAVE MEETING API HIT");
 
@@ -139,8 +135,6 @@ router.post('/:id/leave', authMiddleware, async (req, res) => {
       meeting = await Meeting.findById(id);
     }
 
-    // ✅ CRITICAL FIX 1: If meeting is missing, it was likely ended by host. 
-    // Return SUCCESS (not 404) so the app doesn't show an error.
     if (!meeting) {
       console.log("⚠️ Meeting not found (already ended). Treating as success.");
       return res.json({ message: 'Meeting already ended' });
@@ -150,7 +144,6 @@ router.post('/:id/leave', authMiddleware, async (req, res) => {
     const isParticipant = meeting.participants.some(p => p.toString() === userIdStr);
 
     if (!isParticipant) {
-      // Just return success to keep UI clean
       return res.json({ message: 'User was not in meeting' });
     }
 
@@ -168,7 +161,6 @@ router.post('/:id/leave', authMiddleware, async (req, res) => {
     }
 
     if (meeting.participants.length === 0 && meeting.creator.toString() === userIdStr) {
-      console.log("🗑️ Deleting empty meeting");
       await Meeting.deleteOne({ _id: meeting._id });
     }
 
@@ -183,7 +175,7 @@ router.post('/:id/leave', authMiddleware, async (req, res) => {
   }
 });
 
-// ---------- END MEETING (FIXED) ----------
+// ---------- END MEETING----------
 router.delete('/:id/end', authMiddleware, async (req, res) => {
   console.log("➡️ END MEETING API HIT");
 
@@ -197,7 +189,6 @@ router.delete('/:id/end', authMiddleware, async (req, res) => {
     }
 
     if (!meeting) {
-      // If it's already gone, just return success
       return res.json({ message: 'Meeting already ended' });
     }
 
@@ -206,12 +197,12 @@ router.delete('/:id/end', authMiddleware, async (req, res) => {
     }
 
     const roomId = meeting.roomId;
-    const mongoId = meeting._id.toString(); // ✅ Capture Mongo ID before deleting
+    const mongoId = meeting._id.toString(); 
 
     // Delete
     await Meeting.deleteOne({ _id: meeting._id });
 
-    // ✅ CRITICAL FIX 2: Broadcast to BOTH rooms to ensure everyone hears it
+    //Broadcast to BOTH rooms to ensure everyone hears it
     if (req.io) {
       // 1. Notify 6-digit room
       req.io.to(roomId).emit('meeting-ended', {

@@ -36,20 +36,16 @@ const createMailer = () => {
   });
 };
 
-// 1. In-memory blacklist for logout (Reset when server restarts)
 const blacklistedTokens = new Set();
 
-// 2. Helper function to extract token
 const getTokenFromHeader = (req) => {
   const authHeader = req.headers['authorization'];
-  // Format is usually "Bearer <token>"
   if (authHeader && authHeader.startsWith('Bearer ')) {
     return authHeader.split(' ')[1];
   }
   return null;
 };
 
-// 3. The Missing Middleware
 const authenticateToken = (req, res, next) => {
   const token = getTokenFromHeader(req);
 
@@ -57,21 +53,20 @@ const authenticateToken = (req, res, next) => {
     return res.status(401).json({ error: 'Access denied. No token provided.' });
   }
 
-  // Check if token is in the blacklist (logged out)
   if (blacklistedTokens.has(token)) {
     return res.status(403).json({ error: 'Token is invalid (logged out).' });
   }
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded; // Attach user info to the request object
-    next(); // Move to the next function (the route handler)
+    req.user = decoded; 
+    next(); 
   } catch (err) {
     res.status(403).json({ error: 'Invalid token.' });
   }
 };
 
-// --- ROUTES ---
+// ROUTES 
 
 // Signup
 router.post('/signup', async (req, res) => {
@@ -140,7 +135,6 @@ router.post('/forgot-password', async (req, res) => {
   try {
     const user = await User.findOne({ email: normalizedEmail });
 
-    // Always return success to avoid user enumeration.
     if (!user) {
       console.info('[auth][forgot-password] no matching user', { ...meta, email: normalizedEmail });
       return res.json({ message: 'If that email exists, a reset token has been generated.' });
@@ -237,7 +231,6 @@ router.post('/reset-password', async (req, res) => {
   const hasResetToken = Boolean(token);
 
   try {
-    // 1) If caller is logged in, allow simple reset with JWT.
     const bearerToken = getTokenFromHeader(req);
     console.info('[auth][reset-password] request', {
       ...meta,
@@ -269,7 +262,6 @@ router.post('/reset-password', async (req, res) => {
       return res.json({ message: 'Password reset successful' });
     }
 
-    // 2) Otherwise use the reset token flow.
     if (!token) {
       console.warn('[auth][reset-password] missing reset token', meta);
       return res.status(400).json({ error: 'token is required' });
