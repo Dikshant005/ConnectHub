@@ -57,6 +57,7 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
     if (!meeting) {
       return res.status(404).json({ error: 'Meeting not found' });
     }
+
     if (!meeting.participants.includes(req.user.userId) && meeting.participants.length >= 2) {
       console.log(`Blocked user ${req.user.userId} from joining full room ${meeting.roomId}`);
       return res.status(403).json({ message: 'Meeting is full (Max 2 people)' });
@@ -160,10 +161,6 @@ router.post('/:id/leave', authMiddleware, async (req, res) => {
       });
     }
 
-    if (meeting.participants.length === 0 && meeting.creator.toString() === userIdStr) {
-      await Meeting.deleteOne({ _id: meeting._id });
-    }
-
     res.json({
       message: 'Left meeting successfully',
       roomId: meeting.roomId
@@ -177,7 +174,7 @@ router.post('/:id/leave', authMiddleware, async (req, res) => {
 
 // ---------- END MEETING----------
 router.delete('/:id/end', authMiddleware, async (req, res) => {
-  console.log("➡️ END MEETING API HIT");
+  console.log("➡️ END MEETING API HIT (Treated as Leave)");
 
   try {
     const { id } = req.params;
@@ -189,43 +186,30 @@ router.delete('/:id/end', authMiddleware, async (req, res) => {
     }
 
     if (!meeting) {
-      return res.json({ message: 'Meeting already ended' });
+      return res.json({ message: 'Meeting not found' });
     }
 
     if (meeting.creator.toString() !== req.user.userId) {
-      return res.status(403).json({ error: 'Only creator can end meeting' });
+      return res.status(403).json({ error: 'Only creator can use this endpoint' });
     }
 
-    const roomId = meeting.roomId;
-    const mongoId = meeting._id.toString(); 
+    const userIdStr = req.user.userId.toString();
+    meeting.participants = meeting.participants.filter(p => p.toString() !== userIdStr);
+    await meeting.save();
 
-    // Delete
-    await Meeting.deleteOne({ _id: meeting._id });
-
-    //Broadcast to BOTH rooms to ensure everyone hears it
     if (req.io) {
-      // 1. Notify 6-digit room
-      req.io.to(roomId).emit('meeting-ended', {
-        roomId,
-        endedBy: req.user.userId,
-        message: 'Meeting has been ended by creator'
+      req.io.to(meeting.roomId).emit('user-left', {
+        userId: req.user.userId,
+        roomId: meeting.roomId,
+        participantsCount: meeting.participants.length
       });
-
-      // 2. Notify Mongo ID room (Backup for mismatched users)
-      req.io.to(mongoId).emit('meeting-ended', {
-        roomId,
-        endedBy: req.user.userId,
-        message: 'Meeting has been ended by creator'
-      });
-
-      console.log(`📤 Broadcasted END to ${roomId} AND ${mongoId}`);
     }
 
-    console.log(`🛑 Meeting ${roomId} ended by creator`);
-    res.json({ message: 'Meeting ended successfully', roomId });
+    console.log(`🛑 Host ${req.user.userId} left meeting ${meeting.roomId}`);
+    res.json({ message: 'Left meeting successfully', roomId: meeting.roomId });
 
   } catch (err) {
-    console.error("End Error:", err.message);
+    console.error("End/Leave Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
