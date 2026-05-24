@@ -18,8 +18,7 @@ const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 const app = express();
 
-const FRONTEND_URL =
-  process.env.FRONTEND_URL || "https://connect-hub-virid.vercel.app";
+const FRONTEND_URL ="https://connect-hub-frontend-beryl.vercel.app";
 
 app.use(cors({
   origin: [FRONTEND_URL, "http://localhost:5173"],
