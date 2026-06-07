@@ -5,7 +5,6 @@ const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 const PDFDocument = require('pdfkit');
-const { HfInference } = require('@huggingface/inference');
 const Meeting = require("../models/meeting");
 const authMiddleware = require('../middleware/authMiddleware');
 const { uploadToS3 } = require('../utils/s3');
@@ -16,11 +15,6 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 const upload = multer({ dest: uploadDir });
-
-// Hugging Face client for transcription
-const hf = process.env.HUGGINGFACE_TOKEN
-  ? new HfInference(process.env.HUGGINGFACE_TOKEN)
-  : null;
 
 const getMeetingByIdOrRoomId = async (id) => {
   let meeting = await Meeting.findOne({ roomId: id });
@@ -283,27 +277,34 @@ const finalizeMeetingEnd = async (req, res, meetingIdOrRoomId, audioFilePath) =>
   let recordingUrl = '';
 
   if (audioFilePath && fs.existsSync(audioFilePath)) {
-    // 1. Transcription (if HF is enabled)
-    if (hf) {
-      try {
-        const audioBuffer = fs.readFileSync(audioFilePath);
-        const audioBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
-        const transcription = await hf.automaticSpeechRecognition({
-          data: audioBlob,
-          model: 'openai/whisper-large-v3',
-        });
-        transcript = transcription?.text || '';
-      } catch (err) {
-        console.error("Hugging Face transcription error:", err);
-      }
-    }
-
-    // 2. AWS S3 Upload
+    // 1. AWS S3 Upload FIRST (to get a URL for the transcription service)
     try {
       const fileName = `${Date.now()}-${path.basename(audioFilePath)}`;
       recordingUrl = await uploadToS3(audioFilePath, fileName, 'audio/mpeg');
+      console.log("✅ Uploaded to S3:", recordingUrl);
     } catch (err) {
       console.error("AWS S3 Upload error:", err);
+    }
+
+    // 2. Transcription with Gemini (using the S3 URL to avoid Base64 timeouts)
+    if (recordingUrl && req.genAI) {
+      try {
+        console.log("🎙️ Starting transcription with Gemini using S3 URL...");
+        const model = req.genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const result = await model.generateContent([
+          {
+            fileData: {
+              mimeType: "audio/mpeg",
+              fileUri: recordingUrl
+            }
+          },
+          { text: "Please provide a verbatim transcript of this audio meeting." },
+        ]);
+        transcript = result.response.text();
+        console.log("✅ Transcription complete");
+      } catch (err) {
+        console.error("Gemini transcription error:", err);
+      }
     }
   }
 
@@ -319,6 +320,7 @@ const finalizeMeetingEnd = async (req, res, meetingIdOrRoomId, audioFilePath) =>
   removeMeetingFromActiveSockets(req, meeting);
 
   if (req.io) {
+    console.log(`📡 Emitting 'meeting-ended' to room: ${meeting.roomId}`);
     req.io.to(meeting.roomId).emit('meeting-ended', {
       meetingId: String(meeting._id),
       roomId: meeting.roomId,
