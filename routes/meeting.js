@@ -286,7 +286,8 @@ const finalizeMeetingEnd = async (req, res, meetingIdOrRoomId, audioFilePath) =>
     // 1. Transcription (if HF is enabled)
     if (hf) {
       try {
-        const audioBlob = fs.readFileSync(audioFilePath);
+        const audioBuffer = fs.readFileSync(audioFilePath);
+        const audioBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
         const transcription = await hf.automaticSpeechRecognition({
           data: audioBlob,
           model: 'openai/whisper-large-v3',
