@@ -20,12 +20,27 @@ const app = express();
 
 const FRONTEND_URL ="https://connect-hub-frontend-beryl.vercel.app";
 
+const roomUsers = new Map(); 
+const socketMeta = new Map(); 
+const roomScreenShares = new Map();
+
 app.use(cors({
   origin: [FRONTEND_URL, "http://localhost:5173"],
   credentials: true,
 }));
 
 app.use(bodyParser.json());
+
+// Attach socket.io and genAI to requests BEFORE routes
+app.use((req, res, next) => {
+  req.io = io;
+  req.genAI = genAI;
+  req.roomUsers = roomUsers;
+  req.socketMeta = socketMeta;
+  req.roomScreenShares = roomScreenShares;
+  next();
+});
+
 app.use('/chat', chatRoutes);
 app.use('/auth', authRoutes);
 app.use('/meetings', authMiddleware, meetingRoutes);
@@ -45,22 +60,6 @@ const io = new Server(server, {
     credentials: true,
   },
 });
-
-app.use((req, res, next) => {
-  req.io = io;
-  req.genAI = genAI;
-  req.roomUsers = roomUsers;
-  req.socketMeta = socketMeta;
-  req.roomScreenShares = roomScreenShares;
-  next();
-});
-
-
-const roomUsers = new Map(); 
-
-const socketMeta = new Map(); 
-
-const roomScreenShares = new Map();
 
 io.on('connection', (socket) => {
   console.log('🟢 Connected:', socket.id);
