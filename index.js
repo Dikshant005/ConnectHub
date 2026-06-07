@@ -46,6 +46,15 @@ const io = new Server(server, {
   },
 });
 
+app.use((req, res, next) => {
+  req.io = io;
+  req.genAI = genAI;
+  req.roomUsers = roomUsers;
+  req.socketMeta = socketMeta;
+  req.roomScreenShares = roomScreenShares;
+  next();
+});
+
 
 const roomUsers = new Map(); 
 
