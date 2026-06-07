@@ -52,7 +52,7 @@ const generateReportFromTranscript = async (transcript, genAI) => {
     return buildFallbackReport(transcript);
   }
 
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
   const prompt = `You are a meeting assistant. Extract the following from the transcript and return ONLY valid JSON:
         {
           "summary": "2-3 sentence overview",
@@ -290,7 +290,7 @@ const finalizeMeetingEnd = async (req, res, meetingIdOrRoomId, audioFilePath) =>
     if (recordingUrl && req.genAI) {
       try {
         console.log("🎙️ Starting transcription with Gemini using S3 URL...");
-        const model = req.genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = req.genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         const result = await model.generateContent([
           {
             fileData: {
