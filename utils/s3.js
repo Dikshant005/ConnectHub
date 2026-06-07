@@ -1,4 +1,5 @@
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const fs = require('fs');
 const path = require('path');
 
@@ -11,11 +12,11 @@ const s3Client = new S3Client({
 });
 
 /**
- * Uploads a file to AWS S3 and returns its public URL
+ * Uploads a file to AWS S3 and returns a secure presigned URL
  * @param {string} filePath - Local path to the file
  * @param {string} fileName - Destination name in S3
  * @param {string} mimeType - File MIME type
- * @returns {Promise<string>} - S3 public URL
+ * @returns {Promise<string>} - S3 presigned URL
  */
 const uploadToS3 = async (filePath, fileName, mimeType) => {
   const bucketName = process.env.AWS_S3_BUCKET;
@@ -24,24 +25,31 @@ const uploadToS3 = async (filePath, fileName, mimeType) => {
   }
 
   const fileContent = fs.readFileSync(filePath);
+  const key = `recordings/${fileName}`;
 
-  const params = {
+  const uploadParams = {
     Bucket: bucketName,
-    Key: `recordings/${fileName}`,
+    Key: key,
     Body: fileContent,
     ContentType: mimeType,
   };
 
   try {
-    const command = new PutObjectCommand(params);
-    await s3Client.send(command);
+    // 1. Upload the file
+    const uploadCommand = new PutObjectCommand(uploadParams);
+    await s3Client.send(uploadCommand);
     
-    // Construct the public URL (Note: This assumes the bucket/object has public read access 
-    // or you are using a cloudfront/pre-signed URL strategy. 
-    // Standard public URL: https://BUCKET.s3.REGION.amazonaws.com/KEY)
-    return `https://${bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/recordings/${fileName}`;
+    // 2. Generate a presigned URL for downloading (Gemini needs this)
+    const getCommand = new GetObjectCommand({
+      Bucket: bucketName,
+      Key: key,
+    });
+
+    // URL expires in 1 hour
+    const signedUrl = await getSignedUrl(s3Client, getCommand, { expiresIn: 3600 });
+    return signedUrl;
   } catch (error) {
-    console.error('Error uploading to S3:', error);
+    console.error('Error uploading to S3 or generating signed URL:', error);
     throw error;
   }
 };
