@@ -9,6 +9,7 @@ const meetingSchema = new mongoose.Schema({
   scheduledAt: { type: Date, required: true },
   status: { type: String, default: 'active' },
   ended_at: { type: Date },
+  recordingUrl: { type: String },
   transcript: { type: String },
   report: { type: Object },
   createdAt: { type: Date, default: Date.now },

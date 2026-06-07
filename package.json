@@ -11,6 +11,7 @@
     "dev": "nodemon index.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1063.0",
     "@google/generative-ai": "^0.24.1",
     "@huggingface/inference": "^4.13.18",
     "bcryptjs": "^3.0.3",

@@ -8,6 +8,7 @@ const PDFDocument = require('pdfkit');
 const { HfInference } = require('@huggingface/inference');
 const Meeting = require("../models/meeting");
 const authMiddleware = require('../middleware/authMiddleware');
+const { uploadToS3 } = require('../utils/s3');
 
 const uploadDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) {
@@ -279,17 +280,29 @@ const finalizeMeetingEnd = async (req, res, meetingIdOrRoomId, audioFilePath) =>
   }
 
   let transcript = '';
-  if (audioFilePath && fs.existsSync(audioFilePath) && hf) {
+  let recordingUrl = '';
+
+  if (audioFilePath && fs.existsSync(audioFilePath)) {
+    // 1. Transcription (if HF is enabled)
+    if (hf) {
+      try {
+        const audioBlob = fs.readFileSync(audioFilePath);
+        const transcription = await hf.audio.speechToText({
+          data: audioBlob,
+          model: 'openai/whisper-large-v3',
+        });
+        transcript = transcription?.text || '';
+      } catch (err) {
+        console.error("Hugging Face transcription error:", err);
+      }
+    }
+
+    // 2. AWS S3 Upload
     try {
-      const audioBlob = fs.readFileSync(audioFilePath);
-      const transcription = await hf.audio.speechToText({
-        data: audioBlob,
-        model: 'openai/whisper-large-v3',
-      });
-      transcript = transcription?.text || '';
+      const fileName = `${Date.now()}-${path.basename(audioFilePath)}`;
+      recordingUrl = await uploadToS3(audioFilePath, fileName, 'audio/mpeg');
     } catch (err) {
-      console.error("Hugging Face transcription error:", err);
-      // Do not block report generation if transcription fails
+      console.error("AWS S3 Upload error:", err);
     }
   }
 
@@ -299,6 +312,7 @@ const finalizeMeetingEnd = async (req, res, meetingIdOrRoomId, audioFilePath) =>
   meeting.ended_at = new Date();
   meeting.transcript = transcript;
   meeting.report = report;
+  meeting.recordingUrl = recordingUrl;
   await meeting.save();
 
   removeMeetingFromActiveSockets(req, meeting);
@@ -308,6 +322,7 @@ const finalizeMeetingEnd = async (req, res, meetingIdOrRoomId, audioFilePath) =>
       meetingId: String(meeting._id),
       roomId: meeting.roomId,
       report,
+      recordingUrl,
     });
   }
 
