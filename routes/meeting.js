@@ -6,6 +6,7 @@ const path = require('path');
 const multer = require('multer');
 const PDFDocument = require('pdfkit');
 const Meeting = require("../models/meeting");
+const Message = require("../models/message");
 const authMiddleware = require('../middleware/authMiddleware');
 const { uploadToS3 } = require('../utils/s3');
 
@@ -47,13 +48,13 @@ const buildFallbackReport = (transcript) => {
 };
 
 // Updated to use Gemini
-const generateReportFromTranscript = async (transcript, genAI) => {
+const generateReportFromTranscript = async (transcript, chatHistory, genAI) => {
   if (!genAI) {
     return buildFallbackReport(transcript);
   }
 
   const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-  const prompt = `You are a meeting assistant. Extract the following from the transcript and return ONLY valid JSON:
+  const prompt = `You are a meeting assistant. Extract the following from the transcript and chat history, and return ONLY valid JSON:
         {
           "summary": "2-3 sentence overview",
           "action_items": ["list of tasks mentioned"],
@@ -63,7 +64,10 @@ const generateReportFromTranscript = async (transcript, genAI) => {
         }
 
         Transcript:
-        ${transcript || 'No transcript was captured.'}`;
+        ${transcript || 'No transcript was captured.'}
+
+        Chat History:
+        ${chatHistory || 'No chat messages were sent.'}`;
 
   try {
     const result = await model.generateContent(prompt);
@@ -308,7 +312,17 @@ const finalizeMeetingEnd = async (req, res, meetingIdOrRoomId, audioFilePath) =>
     }
   }
 
-  const report = await generateReportFromTranscript(transcript, req.genAI);
+  // 3. Fetch Chat Messages for the report
+  let chatHistory = '';
+  try {
+    const messages = await Message.find({ meetingId: meeting.roomId }).sort({ timestamp: 1 });
+    chatHistory = messages.map(m => `[${m.senderName}]: ${m.text}`).join('\n');
+    console.log(`💬 Fetched ${messages.length} chat messages for report`);
+  } catch (err) {
+    console.error("Error fetching chat messages for report:", err);
+  }
+
+  const report = await generateReportFromTranscript(transcript, chatHistory, req.genAI);
 
   meeting.status = 'ended';
   meeting.ended_at = new Date();
