@@ -446,7 +446,7 @@ router.get('/reports/me', authMiddleware, async (req, res) => {
       ],
     })
       .sort({ ended_at: -1, createdAt: -1 })
-      .select('title roomId ended_at report creator scheduledAt');
+      .select('title roomId ended_at report reportStatus creator scheduledAt');
 
     return res.json({
       meetings: meetings.map((meeting) => ({
@@ -456,6 +456,7 @@ router.get('/reports/me', authMiddleware, async (req, res) => {
         ended_at: meeting.ended_at,
         scheduledAt: meeting.scheduledAt,
         report: meeting.report,
+        reportStatus: meeting.reportStatus,
         downloadUrl: `/meetings/${meeting._id}/report/download`,
         reportUrl: `/meetings/${meeting._id}/report`,
       })),
@@ -477,6 +478,7 @@ router.get('/:meetingId/report', authMiddleware, async (req, res) => {
       meetingId: String(meeting._id),
       roomId: meeting.roomId,
       status: meeting.status,
+      reportStatus: meeting.reportStatus,
       ended_at: meeting.ended_at,
       report: meeting.report,
       transcript: meeting.transcript,

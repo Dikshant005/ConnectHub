@@ -30,7 +30,8 @@ app.use(cors({
   credentials: true,
 }));
 
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
 // Attach socket.io and genAI to requests BEFORE routes
 app.use((req, res, next) => {
