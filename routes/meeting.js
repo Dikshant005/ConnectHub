@@ -271,13 +271,14 @@ const processMeetingReportInBackground = async (meetingId, audioFilePath, genAI,
     let recordingUrl = '';
 
     if (audioFilePath && fs.existsSync(audioFilePath)) {
+      console.log(`📂 [Background] Found audio file at: ${audioFilePath}, size: ${fs.statSync(audioFilePath).size} bytes`);
       // 1. AWS S3 Upload
       try {
         const fileName = `${Date.now()}-${path.basename(audioFilePath)}`;
         recordingUrl = await uploadToS3(audioFilePath, fileName, 'audio/mpeg');
         console.log("✅ [Background] Uploaded to S3:", recordingUrl);
       } catch (err) {
-        console.error("AWS S3 Upload error:", err);
+        console.error("❌ [Background] AWS S3 Upload error:", err);
       }
 
       // 2. Transcription with Gemini
@@ -295,11 +296,16 @@ const processMeetingReportInBackground = async (meetingId, audioFilePath, genAI,
             { text: "Please provide a verbatim transcript of this audio meeting." },
           ]);
           transcript = result.response.text();
-          console.log("✅ [Background] Transcription complete");
+          console.log(`✅ [Background] Transcription complete. Length: ${transcript?.length || 0} characters`);
+          if (!transcript) {
+            console.warn("⚠️ [Background] Gemini returned an empty transcript.");
+          }
         } catch (err) {
-          console.error("Gemini transcription error:", err);
+          console.error("❌ [Background] Gemini transcription error:", err);
         }
       }
+    } else {
+      console.warn("⚠️ [Background] No audio file found for transcription.");
     }
 
     // 3. Fetch Chat Messages for the report
