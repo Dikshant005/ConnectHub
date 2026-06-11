@@ -8,6 +8,7 @@ const meetingSchema = new mongoose.Schema({
   participants: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   scheduledAt: { type: Date, required: true },
   status: { type: String, default: 'active' },
+  reportStatus: { type: String, enum: ['none', 'processing', 'completed', 'failed'], default: 'none' },
   ended_at: { type: Date },
   recordingUrl: { type: String },
   transcript: { type: String },
