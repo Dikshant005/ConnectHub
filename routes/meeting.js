@@ -177,6 +177,9 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
     // 3. Check if already joined (Idempotency)
     if (meeting.participants.some(p => p.toString() === req.user.userId)) {
       console.log(`🎉 User re-joined meeting: ${meeting.roomId}`);
+      
+      const token = createToken(meeting.roomId, req.user.userId, req.user.username || req.user.userId);
+      
       return res.status(200).json({ 
           message: 'Already joined', 
           meeting,
