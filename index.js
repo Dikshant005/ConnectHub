@@ -83,10 +83,10 @@ io.on('connection', (socket) => {
       return;
     }
 
-    if (users.size >= 2) {
+    /* if (users.size >= 2) {
       socket.emit('room-full');
       return;
-    }
+    } */
 
     users.set(userId, socket.id);
     socketMeta.set(socket.id, { roomId, userId });
@@ -95,7 +95,7 @@ io.on('connection', (socket) => {
     console.log(`✅ ${userId} joined ${roomId}`);
 
     // Notify others
-    socket.to(roomId).emit('user-connected', userId);
+    // socket.to(roomId).emit('user-connected', userId);
   });
 
   /* ---------------- MIC STATUS ---------------- */
@@ -118,36 +118,32 @@ io.on('connection', (socket) => {
 
   /* ---------------- SIGNAL ---------------- */
 
-  socket.on('signal', (toUserId, data) => {
+  /* socket.on('signal', (toUserId, data) => {
     const meta = socketMeta.get(socket.id);
     if (!meta) return;
-
     const { roomId, userId } = meta;
     const users = roomUsers.get(roomId);
     const toSocketId = users?.get(toUserId);
-
     if (toSocketId) {
       io.to(toSocketId).emit('signal', userId, data);
     }
-  });
+  }); */
 
   /* ---------------- ICE ---------------- */
 
-  socket.on('ice-candidate', ({ toUserId, candidate }) => {
+  /* socket.on('ice-candidate', ({ toUserId, candidate }) => {
     const meta = socketMeta.get(socket.id);
     if (!meta || !candidate) return;
-
     const { roomId, userId } = meta;
     const users = roomUsers.get(roomId);
     const toSocketId = users?.get(toUserId);
-
     if (toSocketId) {
       io.to(toSocketId).emit('ice-candidate', {
         fromUserId: userId,
         candidate,
       });
     }
-  });
+  }); */
 
   /* ---------------- CHAT ---------------- */
 
@@ -210,7 +206,7 @@ io.on('connection', (socket) => {
       socket.to(roomId).emit('user-stopped-screen-share', userId);
     }
 
-    socket.to(roomId).emit('user-disconnected', userId);
+    // socket.to(roomId).emit('user-disconnected', userId);
     socketMeta.delete(socket.id);
 
     console.log(`🔴 ${userId} disconnected`);

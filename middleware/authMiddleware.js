@@ -22,7 +22,7 @@ const authMiddleware = (req, res, next) => {
   }
 
   try {
-    const secret = 'secret';
+    const secret = process.env.JWT_SECRET; 
     console.log('Using JWT secret:', secret);
     const decoded = jwt.verify(token, secret);
     console.log('Decoded token:', decoded);

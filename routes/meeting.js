@@ -9,6 +9,7 @@ const Meeting = require("../models/meeting");
 const Message = require("../models/message");
 const authMiddleware = require('../middleware/authMiddleware');
 const { uploadToS3 } = require('../utils/s3');
+const { AccessToken } = require('livekit-server-sdk');
 
 const uploadDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) {
@@ -29,13 +30,13 @@ const normalizeReport = (reportText) => {
   if (!reportText) return null;
 
   const trimmed = String(reportText).trim();
-  const unwrapped = trimmed.replace(/^```json\s*/i, '').replace(/```\s*$/i, '');
+  const unwrapped = trimmed.replace(/^```json\s*/i, '').replace(/```\s*$/i, '');  // removes starting and ending ```json or ```
   return JSON.parse(unwrapped);
 };
 
 const buildFallbackReport = (transcript) => {
   const summary = transcript
-    ? transcript.split(/(?<=[.!?])\s+/).slice(0, 3).join(' ')
+    ? transcript.split(/(?<=[.!?])\s+/).slice(0, 3).join(' ')  // Split after: .,!,? Take first three sentences and join them
     : '';
 
   return {
@@ -133,6 +134,12 @@ router.post('/', authMiddleware, async (req, res) => {
 router.post('/:id/join', authMiddleware, async (req, res) => {
   console.log("➡️ JOIN MEETING API HIT");
   try {
+    const { LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL } = process.env;
+
+    if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_URL) {
+      return res.status(500).json({ error: "LiveKit server credentials not configured." });
+    }
+
     const roomInput = req.body.room || req.body.roomId || req.params.id;
     let meeting;
 
@@ -147,33 +154,57 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
     if (!meeting) {
       return res.status(404).json({ error: 'Meeting not found' });
     }
-
-    if (!meeting.participants.includes(req.user.userId) && meeting.participants.length >= 2) {
+    
+    // Hardcoded for max 2 (COMMENTED OUT)
+    /* if (!meeting.participants.includes(req.user.userId) && meeting.participants.length >= 2) {
       console.log(`Blocked user ${req.user.userId} from joining full room ${meeting.roomId}`);
       return res.status(403).json({ message: 'Meeting is full (Max 2 people)' });
-    }
+    } */
+
+    const createToken = (roomName, participantIdentity, participantName) => {
+        const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
+            identity: participantIdentity,
+            name: participantName,
+        });
+        at.addGrant({ roomJoin: true, room: roomName });
+        return at.toJwt();
+    };
+    
+    // The user object from the auth middleware should contain the necessary details.
+    const token = createToken(meeting.roomId, req.user.userId, req.user.username || req.user.userId);
 
     // 3. Check if already joined (Idempotency)
-    if (meeting.participants.includes(req.user.userId)) {
-      return res.status(200).json({ message: 'Already joined', meeting });
+    if (meeting.participants.some(p => p.toString() === req.user.userId)) {
+      console.log(`🎉 User re-joined meeting: ${meeting.roomId}`);
+      return res.status(200).json({ 
+          message: 'Already joined', 
+          meeting,
+          token,
+          livekitUrl: LIVEKIT_URL,
+      });
     }
 
     // 4. Add user to DB
     meeting.participants.push(req.user.userId);
     await meeting.save();
 
-    // Notify room that someone joined
-    if (req.io) {
+    // Notify room that someone joined (COMMENTED OUT - LiveKit handles this)
+    /* if (req.io) {
       req.io.to(meeting.roomId).emit('user-joined', {
         userId: req.user.userId,
         roomId: meeting.roomId,
         participantsCount: meeting.participants.length
       });
       console.log(`📡 Emitted user-joined to room ${meeting.roomId}`);
-    }
+    } */
 
     console.log(`🎉 User joined meeting: ${meeting.roomId}`);
-    res.json({ message: 'Joined meeting', meeting });
+    res.json({ 
+        message: 'Joined meeting', 
+        meeting,
+        token,
+        livekitUrl: LIVEKIT_URL,
+    });
 
   } catch (err) {
     console.error("Join Error:", err.message);
@@ -262,7 +293,7 @@ router.post('/:id/leave', authMiddleware, async (req, res) => {
   }
 });
 
-const processMeetingReportInBackground = async (meetingId, audioFilePath, genAI, io) => {
+const processMeetingReportInBackground = async (meetingId, audioFilePath, genAI, io) => {  // in future will use live transcription by realtime audio 
   try {
     const meeting = await Meeting.findById(meetingId);
     if (!meeting) return;
