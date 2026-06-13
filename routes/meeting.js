@@ -133,6 +133,7 @@ router.post('/', authMiddleware, async (req, res) => {
 // ---------- JOIN MEETING ----------
 router.post('/:id/join', authMiddleware, async (req, res) => {
   console.log("➡️ JOIN MEETING API HIT");
+
   try {
     const { LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL } = process.env;
 
@@ -199,12 +200,16 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
     } */
 
     console.log(`🎉 User joined meeting: ${meeting.roomId}`);
-    res.json({ 
+    
+    const responseData = { 
         message: 'Joined meeting', 
         meeting,
         token,
         livekitUrl: LIVEKIT_URL,
-    });
+    };
+    console.log("DEBUG: Sending this response to frontend:", JSON.stringify(responseData, null, 2));
+
+    res.json(responseData);
 
   } catch (err) {
     console.error("Join Error:", err.message);
