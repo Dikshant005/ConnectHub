@@ -138,81 +138,48 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
     const { LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL } = process.env;
 
     if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_URL) {
-      return res.status(500).json({ error: "LiveKit server credentials not configured." });
+      return res.status(500).json({ error: "LiveKit server credentials not configured on backend." });
     }
 
     const roomInput = req.body.room || req.body.roomId || req.params.id;
     let meeting;
 
-    // 1. Try finding by 6-digit Room ID first
+    // Try finding by 6-digit Room ID first, then by Mongo ID
     meeting = await Meeting.findOne({ roomId: roomInput });
-
-    // 2. If not found, check Mongo ID
     if (!meeting && mongoose.Types.ObjectId.isValid(roomInput)) {
-      meeting = await Meeting.findById(roomInput);
+        meeting = await Meeting.findById(roomInput);
     }
 
     if (!meeting) {
       return res.status(404).json({ error: 'Meeting not found' });
     }
-    
-    // Hardcoded for max 2 (COMMENTED OUT)
-    /* if (!meeting.participants.includes(req.user.userId) && meeting.participants.length >= 2) {
-      console.log(`Blocked user ${req.user.userId} from joining full room ${meeting.roomId}`);
-      return res.status(403).json({ message: 'Meeting is full (Max 2 people)' });
-    } */
 
-    const createToken = (roomName, participantIdentity, participantName) => {
-        const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
-            identity: participantIdentity,
-            name: participantName,
-        });
-        at.addGrant({ roomJoin: true, room: roomName });
-        return at.toJwt();
+    const createToken = (room, identity, name) => {
+      const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, { identity, name });
+      at.addGrant({ roomJoin: true, room });
+      return at.toJwt();
     };
-    
-    // The user object from the auth middleware should contain the necessary details.
-    const token = createToken(meeting.roomId, req.user.userId, req.user.username || req.user.userId);
 
-    // 3. Check if already joined (Idempotency)
-    if (meeting.participants.some(p => p.toString() === req.user.userId)) {
+    const token = createToken(meeting.roomId, req.user.userId, req.user.username || 'Anonymous');
+
+    // Add user to participants list if they are not already there
+    if (!meeting.participants.some(p => p.toString() === req.user.userId)) {
+      meeting.participants.push(req.user.userId);
+      await meeting.save();
+      console.log(`🎉 New user joined meeting: ${meeting.roomId}`);
+    } else {
       console.log(`🎉 User re-joined meeting: ${meeting.roomId}`);
-      
-      const token = createToken(meeting.roomId, req.user.userId, req.user.username || req.user.userId);
-      
-      return res.status(200).json({ 
-          message: 'Already joined', 
-          meeting,
-          token,
-          livekitUrl: LIVEKIT_URL,
-      });
     }
 
-    // 4. Add user to DB
-    meeting.participants.push(req.user.userId);
-    await meeting.save();
-
-    // Notify room that someone joined (COMMENTED OUT - LiveKit handles this)
-    /* if (req.io) {
-      req.io.to(meeting.roomId).emit('user-joined', {
-        userId: req.user.userId,
-        roomId: meeting.roomId,
-        participantsCount: meeting.participants.length
-      });
-      console.log(`📡 Emitted user-joined to room ${meeting.roomId}`);
-    } */
-
-    console.log(`🎉 User joined meeting: ${meeting.roomId}`);
-    
-    const responseData = { 
-        message: 'Joined meeting', 
-        meeting,
-        token,
-        livekitUrl: LIVEKIT_URL,
+    const responseData = {
+      message: "Successfully joined",
+      meeting,
+      token,
+      livekitUrl: LIVEKIT_URL,
     };
-    console.log("DEBUG: Sending this response to frontend:", JSON.stringify(responseData, null, 2));
 
-    res.json(responseData);
+    console.log("DEBUG: Sending this response to frontend:", JSON.stringify(responseData, null, 2));
+    res.status(200).json(responseData);
 
   } catch (err) {
     console.error("Join Error:", err.message);
