@@ -6,6 +6,7 @@ const path = require('path');
 const multer = require('multer');
 const PDFDocument = require('pdfkit');
 const Meeting = require("../models/meeting");
+const User = require("../models/user");
 const Message = require("../models/message");
 const authMiddleware = require('../middleware/authMiddleware');
 const { uploadToS3 } = require('../utils/s3');
@@ -396,7 +397,14 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
       return await at.toJwt();
     };
 
-    const token = await createToken(meeting.roomId, req.user.userId, req.user.username || 'Anonymous');
+    // If username is missing from req.user, fetch it from DB
+    let username = req.user.username;
+    if (!username) {
+      const user = await User.findById(req.user.userId).select('username');
+      username = user ? user.username : 'Anonymous';
+    }
+
+    const token = await createToken(meeting.roomId, username, username);
 
     // Add user to participants list if they are not already there
     if (!meeting.participants.some(p => p.toString() === req.user.userId)) {
