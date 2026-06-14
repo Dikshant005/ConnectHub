@@ -433,83 +433,43 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
 
 // ---------- GET PARTICIPANTS ----------
 router.get('/:id/participants', authMiddleware, async (req, res) => {
-  console.log("➡️ GET PARTICIPANTS API HIT");
+    try {
+        const { id } = req.params;
+        let meeting;
 
-  try {
-    const { id } = req.params;
-    let meeting;
+        meeting = await Meeting.findOne({ roomId: id })
+            .populate('participants', 'username email');
 
-    // try roomId first
-    meeting = await Meeting.findOne({ roomId: id }).populate('participants', 'username email');
+        if (!meeting && mongoose.Types.ObjectId.isValid(id)) {
+            meeting = await Meeting.findById(id)
+                .populate('participants', 'username email');
+        }
 
-    // fallback to Mongo ObjectId
-    if (!meeting && mongoose.Types.ObjectId.isValid(id)) {
-      meeting = await Meeting.findById(id).populate('participants', 'username email');
+        if (!meeting) {
+            return res.status(404).json({ error: 'Meeting not found' });
+        }
+
+        // ✅ Ensure host/creator is always in the list
+        const participantIds = meeting.participants.map(p => p._id.toString());
+        let participantList = [...meeting.participants];
+
+        if (!participantIds.includes(meeting.creator.toString())) {
+            const hostUser = await User.findById(meeting.creator).select('username email');
+            if (hostUser) participantList = [hostUser, ...participantList];
+        }
+
+        return res.json({
+            roomId: meeting.roomId,
+            meetingId: meeting._id,
+            hostUserId: meeting.creator,       // ✅ always send this
+            participants: participantList,      // ✅ always includes host
+            participantsCount: participantList.length,
+        });
+
+    } catch (err) {
+        console.error('Participants Error:', err.message);
+        return res.status(500).json({ error: err.message });
     }
-
-    if (!meeting) {
-      return res.status(404).json({ error: 'Meeting not found' });
-    }
-
-    return res.json({
-      roomId: meeting.roomId,
-      meetingId: meeting._id,
-      participants: meeting.participants,
-      participantsCount: meeting.participants.length,
-    });
-  } catch (err) {
-    console.error('Participants Error:', err.message);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// ---------- PARTICIPANT LEAVE MEETING ----------
-router.post('/:id/leave', authMiddleware, async (req, res) => {
-  console.log("➡️ LEAVE MEETING API HIT");
-
-  try {
-    const { id } = req.params;
-    let meeting;
-
-    meeting = await Meeting.findOne({ roomId: id });
-    if (!meeting && mongoose.Types.ObjectId.isValid(id)) {
-      meeting = await Meeting.findById(id);
-    }
-
-    if (!meeting) {
-      console.log("⚠️ Meeting not found (already ended). Treating as success.");
-      return res.json({ message: 'Meeting already ended' });
-    }
-
-    const userIdStr = req.user.userId.toString();
-    const isParticipant = meeting.participants.some(p => p.toString() === userIdStr);
-
-    if (!isParticipant) {
-      return res.json({ message: 'User was not in meeting' });
-    }
-
-    meeting.participants = meeting.participants.filter(p => p.toString() !== userIdStr);
-    await meeting.save();
-
-    console.log(`✅ User left meeting ${meeting.roomId}`);
-
-    if (req.io) {
-      req.io.to(meeting.roomId).emit('user-left', {
-        userId: req.user.userId,
-        roomId: meeting.roomId,
-        participantsCount: meeting.participants.length
-      });
-    }
-
-    res.json({
-      message: 'Left meeting successfully',
-      roomId: meeting.roomId
-    });
-
-  } catch (err) {
-    console.error("Leave Error:", err.message);
-    res.status(500).json({ error: err.message });
-  }
 });
 
 router.get('/reports/me', authMiddleware, async (req, res) => {
