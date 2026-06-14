@@ -94,6 +94,135 @@ const removeMeetingFromActiveSockets = (req, meeting) => {
   }
 };
 
+const processMeetingReportInBackground = async (meetingId, genAI, io) => {
+  try {
+    const meeting = await Meeting.findById(meetingId);
+    if (!meeting) return;
+
+    let fullTranscript = '';
+
+    // Sort chunks by index and transcribe each one
+    const chunks = (meeting.audioChunks || []).sort((a, b) => a.index - b.index);
+    console.log(`📂 [Background] Processing ${chunks.length} audio chunks...`);
+
+    if (chunks.length > 0 && genAI) {
+      for (const chunk of chunks) {
+        if (chunk.transcript) {
+          // ✅ Already transcribed during upload — use it directly
+          fullTranscript += (fullTranscript ? '\n' : '') + chunk.transcript;
+          console.log(`✅ [Background] Using pre-transcribed chunk ${chunk.index}`);
+        } else {
+          try {
+            console.log(`🎙️ [Background] Transcribing chunk ${chunk.index} (fallback)...`);
+            const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+            const result = await model.generateContent([
+              {
+                fileData: {
+                  mimeType: "audio/webm",
+                  fileUri: chunk.url
+                }
+              },
+              { text: "Please provide a verbatim transcript of this audio segment." },
+            ]);
+            const chunkTranscript = result.response.text();
+            if (chunkTranscript) {
+              fullTranscript += (fullTranscript ? '\n' : '') + chunkTranscript;
+              console.log(`✅ [Background] Chunk ${chunk.index} transcribed. Length: ${chunkTranscript.length}`);
+            }
+          } catch (err) {
+            console.error(`❌ [Background] Failed to transcribe chunk ${chunk.index}:`, err);
+            // Continue with remaining chunks even if one fails
+          }
+        }
+      }
+    } else {
+      console.warn("⚠️ [Background] No audio chunks found for transcription.");
+    }
+
+    // Fetch chat messages
+    let chatHistory = '';
+    try {
+      const messages = await Message.find({ meetingId: meeting.roomId }).sort({ timestamp: 1 });
+      chatHistory = messages.map(m => `[${m.senderName}]: ${m.text}`).join('\n');
+    } catch (err) {
+      console.error("Error fetching chat messages:", err);
+    }
+
+    // Generate report from full merged transcript
+    const report = await generateReportFromTranscript(fullTranscript, chatHistory, genAI);
+
+    meeting.transcript = fullTranscript;
+    meeting.report = report;
+    meeting.reportStatus = 'completed';
+    await meeting.save();
+
+    console.log(`✅ [Background] Report generated for meeting: ${meeting.roomId}`);
+
+    if (io) {
+      io.to(meeting.roomId).emit('report-ready', {
+        meetingId: String(meeting._id),
+        roomId: meeting.roomId,
+        report,
+      });
+    }
+
+  } catch (err) {
+    console.error("❌ [Background] Error processing meeting report:", err);
+    try {
+      const meeting = await Meeting.findById(meetingId);
+      if (meeting) {
+        meeting.reportStatus = 'failed';
+        await meeting.save();
+      }
+    } catch (saveErr) {
+      console.error("Error updating meeting status to failed:", saveErr);
+    }
+  }
+};
+
+const finalizeMeetingEnd = async (req, res, meetingIdOrRoomId) => {
+  const meeting = await getMeetingByIdOrRoomId(meetingIdOrRoomId);
+
+  if (!meeting) {
+    return res.status(404).json({ error: 'Meeting not found' });
+  }
+
+  if (meeting.creator.toString() !== req.user.userId.toString()) {
+    return res.status(403).json({ error: 'Only the host can end this meeting' });
+  }
+
+  if (meeting.status === 'ended') {
+    return res.json({ success: true, report: meeting.report, message: 'Meeting already ended' });
+  }
+
+  meeting.status = 'ended';
+  meeting.ended_at = new Date();
+  meeting.reportStatus = 'processing';
+  await meeting.save();
+
+  removeMeetingFromActiveSockets(req, meeting);
+
+  if (req.io) {
+    console.log(`📡 Emitting 'meeting-ended' to room: ${meeting.roomId}`);
+    req.io.to(meeting.roomId).emit('meeting-ended', {
+      meetingId: String(meeting._id),
+      roomId: meeting.roomId,
+      status: 'ended',
+      reportStatus: 'processing'
+    });
+  }
+
+  // ✅ No audioFilePath — chunks already uploaded during meeting
+  processMeetingReportInBackground(meeting._id, req.genAI, req.io);
+
+  return res.json({
+    success: true,
+    meetingId: String(meeting._id),
+    roomId: meeting.roomId,
+    reportStatus: 'processing'
+  });
+};
+
 // ---------- CREATE MEETING ----------
 router.post('/', authMiddleware, async (req, res) => {
   console.log("➡️ CREATE MEETING API HIT");
@@ -126,6 +255,113 @@ router.post('/', authMiddleware, async (req, res) => {
     res.status(201).json(meeting);
 
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------- CHUNK UPLOAD ----------
+router.post('/chunk', authMiddleware, upload.single('audio'), async (req, res) => {
+  console.log("➡️ CHUNK UPLOAD API HIT");
+
+  const genAI = req.genAI;
+
+  try {
+    const { meetingId, chunkIndex } = req.body;
+    if (!meetingId || chunkIndex === undefined || !req.file) {
+      return res.status(400).json({ error: 'meetingId, chunkIndex and audio file are required' });
+    }
+
+    const meeting = await getMeetingByIdOrRoomId(meetingId);
+    if (!meeting) {
+      if (req.file?.path) fs.unlinkSync(req.file.path);
+      return res.status(404).json({ error: 'Meeting not found' });
+    }
+
+    // Upload chunk to S3
+    let chunkUrl = '';
+    try {
+      const fileName = `chunks/${meeting._id}/chunk-${String(chunkIndex).padStart(4, '0')}-${Date.now()}.webm`;
+      chunkUrl = await uploadToS3(req.file.path, fileName, 'audio/webm');
+      console.log(`✅ Chunk ${chunkIndex} uploaded to S3:`, chunkUrl);
+    } catch (err) {
+      console.error(`❌ S3 upload failed for chunk ${chunkIndex}:`, err);
+      return res.status(500).json({ error: 'Failed to upload chunk to S3' });
+    } finally {
+      // Clean up local file regardless
+      if (req.file?.path && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+    }
+
+    // Save chunk URL immediately with empty transcript
+    if (!meeting.audioChunks) meeting.audioChunks = [];
+    meeting.audioChunks.push({
+      index: Number(chunkIndex),
+      url: chunkUrl,
+      transcript: ''
+    });
+    meeting.markModified('audioChunks');
+    await meeting.save();
+
+    // ✅ Respond to frontend immediately — don't wait for transcription
+    res.json({ success: true, chunkIndex, chunkUrl });
+
+    // ✅ Transcribe in background — won't block or affect UX at all
+    if (genAI) {
+      (async () => {
+        try {
+          console.log(`🎙️ [Background] Transcribing chunk ${chunkIndex}...`);
+          const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+          const result = await model.generateContent([
+            { fileData: { mimeType: "audio/webm", fileUri: chunkUrl } },
+            { text: "Please provide a verbatim transcript of this audio segment." },
+          ]);
+          const chunkTranscript = result.response.text() || '';
+          console.log(`✅ [Background] Chunk ${chunkIndex} transcribed. Length: ${chunkTranscript.length}`);
+
+          // Update the transcript for this specific chunk in DB
+          await Meeting.updateOne(
+            { _id: meeting._id, 'audioChunks.index': Number(chunkIndex) },
+            { $set: { 'audioChunks.$.transcript': chunkTranscript } }
+          );
+        } catch (err) {
+          console.error(`❌ [Background] Transcription failed for chunk ${chunkIndex}:`, err);
+          // No action needed — processMeetingReportInBackground will handle empty transcripts
+        }
+      })();
+    }
+
+  } catch (err) {
+    console.error("Chunk Upload Error:", err.message);
+    if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------- END MEETING ----------
+router.post('/end', authMiddleware, async (req, res) => {
+  console.log("➡️ END MEETING API HIT");
+  try {
+    const meetingId = req.body.meetingId || req.body.id || req.body.roomId;
+    if (!meetingId) {
+      return res.status(400).json({ error: 'meetingId is required' });
+    }
+    return await finalizeMeetingEnd(req, res, meetingId);
+  } catch (err) {
+    console.error("End Meeting Error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/:id/end', authMiddleware, async (req, res) => {
+  console.log("➡️ END MEETING API HIT (legacy route)");
+
+  try {
+    const { id } = req.params;
+    return await finalizeMeetingEnd(req, res, id);
+
+  } catch (err) {
+    console.error("End Meeting Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -188,7 +424,6 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
 });
 
 // ---------- GET PARTICIPANTS ----------
-// Allows frontend to fetch all participants in a meeting by roomId or mongoId
 router.get('/:id/participants', authMiddleware, async (req, res) => {
   console.log("➡️ GET PARTICIPANTS API HIT");
 
@@ -219,6 +454,7 @@ router.get('/:id/participants', authMiddleware, async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
 // ---------- PARTICIPANT LEAVE MEETING ----------
 router.post('/:id/leave', authMiddleware, async (req, res) => {
   console.log("➡️ LEAVE MEETING API HIT");
@@ -264,186 +500,6 @@ router.post('/:id/leave', authMiddleware, async (req, res) => {
 
   } catch (err) {
     console.error("Leave Error:", err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-const processMeetingReportInBackground = async (meetingId, audioFilePath, genAI, io) => {  // in future will use live transcription by realtime audio 
-  try {
-    const meeting = await Meeting.findById(meetingId);
-    if (!meeting) return;
-
-    let transcript = '';
-    let recordingUrl = '';
-
-    if (audioFilePath && fs.existsSync(audioFilePath)) {
-      console.log(`📂 [Background] Found audio file at: ${audioFilePath}, size: ${fs.statSync(audioFilePath).size} bytes`);
-      // 1. AWS S3 Upload
-      try {
-        const fileName = `${Date.now()}-${path.basename(audioFilePath)}`;
-        recordingUrl = await uploadToS3(audioFilePath, fileName, 'audio/mpeg');
-        console.log("✅ [Background] Uploaded to S3:", recordingUrl);
-      } catch (err) {
-        console.error("❌ [Background] AWS S3 Upload error:", err);
-      }
-
-      // 2. Transcription with Gemini
-      if (recordingUrl && genAI) {
-        try {
-          console.log("🎙️ [Background] Starting transcription with Gemini...");
-          const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-          const result = await model.generateContent([
-            {
-              fileData: {
-                mimeType: "audio/mpeg",
-                fileUri: recordingUrl
-              }
-            },
-            { text: "Please provide a verbatim transcript of this audio meeting." },
-          ]);
-          transcript = result.response.text();
-          console.log(`✅ [Background] Transcription complete. Length: ${transcript?.length || 0} characters`);
-          if (!transcript) {
-            console.warn("⚠️ [Background] Gemini returned an empty transcript.");
-          }
-        } catch (err) {
-          console.error("❌ [Background] Gemini transcription error:", err);
-        }
-      }
-    } else {
-      console.warn("⚠️ [Background] No audio file found for transcription.");
-    }
-
-    // 3. Fetch Chat Messages for the report
-    let chatHistory = '';
-    try {
-      const messages = await Message.find({ meetingId: meeting.roomId }).sort({ timestamp: 1 });
-      chatHistory = messages.map(m => `[${m.senderName}]: ${m.text}`).join('\n');
-    } catch (err) {
-      console.error("Error fetching chat messages for report:", err);
-    }
-
-    // 4. Generate Report
-    const report = await generateReportFromTranscript(transcript, chatHistory, genAI);
-
-    // Update meeting with final data
-    meeting.transcript = transcript;
-    meeting.report = report;
-    meeting.recordingUrl = recordingUrl;
-    meeting.reportStatus = 'completed';
-    await meeting.save();
-
-    console.log(`✅ [Background] Report generated for meeting: ${meeting.roomId}`);
-
-    // Emit 'report-ready' to notify the frontend
-    if (io) {
-      io.to(meeting.roomId).emit('report-ready', {
-        meetingId: String(meeting._id),
-        roomId: meeting.roomId,
-        report,
-        recordingUrl,
-      });
-    }
-
-    // Cleanup local file
-    if (audioFilePath && fs.existsSync(audioFilePath)) {
-      fs.unlinkSync(audioFilePath);
-    }
-  } catch (err) {
-    console.error("❌ [Background] Error processing meeting report:", err);
-    try {
-      const meeting = await Meeting.findById(meetingId);
-      if (meeting) {
-        meeting.reportStatus = 'failed';
-        await meeting.save();
-      }
-    } catch (saveErr) {
-      console.error("Error updating meeting status to failed:", saveErr);
-    }
-    if (audioFilePath && fs.existsSync(audioFilePath)) {
-      fs.unlinkSync(audioFilePath);
-    }
-  }
-};
-
-const finalizeMeetingEnd = async (req, res, meetingIdOrRoomId, audioFilePath) => {
-  const meeting = await getMeetingByIdOrRoomId(meetingIdOrRoomId);
-
-  if (!meeting) {
-    if (audioFilePath && fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
-    return res.status(404).json({ error: 'Meeting not found' });
-  }
-
-  if (meeting.creator.toString() !== req.user.userId.toString()) {
-    if (audioFilePath && fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
-    return res.status(403).json({ error: 'Only the host can end this meeting' });
-  }
-
-  if (meeting.status === 'ended') {
-    if (audioFilePath && fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
-    return res.json({ success: true, report: meeting.report, message: 'Meeting already ended' });
-  }
-
-  // Mark meeting as ended IMMEDIATELY
-  meeting.status = 'ended';
-  meeting.ended_at = new Date();
-  meeting.reportStatus = 'processing';
-  await meeting.save();
-
-  removeMeetingFromActiveSockets(req, meeting);
-
-  // Emit 'meeting-ended' IMMEDIATELY to notify participants
-  if (req.io) {
-    console.log(`📡 Emitting 'meeting-ended' to room: ${meeting.roomId}`);
-    req.io.to(meeting.roomId).emit('meeting-ended', {
-      meetingId: String(meeting._id),
-      roomId: meeting.roomId,
-      status: 'ended',
-      reportStatus: 'processing'
-    });
-  }
-
-  // Start background processing
-  processMeetingReportInBackground(meeting._id, audioFilePath, req.genAI, req.io);
-
-  // Return response IMMEDIATELY (< 1s)
-  return res.json({ 
-    success: true, 
-    meetingId: String(meeting._id), 
-    roomId: meeting.roomId, 
-    reportStatus: 'processing' 
-  });
-};
-
-// ---------- END MEETING----------
-router.post('/end', authMiddleware, upload.single('audio'), async (req, res) => {
-  console.log("➡️ END MEETING API HIT");
-
-  try {
-    const meetingId = req.body.meetingId || req.body.id || req.body.roomId;
-    if (!meetingId) {
-      return res.status(400).json({ error: 'meetingId is required' });
-    }
-
-    return await finalizeMeetingEnd(req, res, meetingId, req.file?.path);
-  } catch (err) {
-    console.error("End Meeting Error:", err.message);
-    if (req.file?.path && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-router.delete('/:id/end', authMiddleware, async (req, res) => {
-  console.log("➡️ END MEETING API HIT (legacy route)");
-
-  try {
-    const { id } = req.params;
-    return await finalizeMeetingEnd(req, res, id);
-
-  } catch (err) {
-    console.error("End Meeting Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
