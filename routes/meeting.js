@@ -154,13 +154,13 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Meeting not found' });
     }
 
-    const createToken = (room, identity, name) => {
+    const createToken = async (room, identity, name) => {
       const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, { identity, name });
       at.addGrant({ roomJoin: true, room });
-      return at.toJwt();
+      return await at.toJwt();
     };
 
-    const token = createToken(meeting.roomId, req.user.userId, req.user.username || 'Anonymous');
+    const token = await createToken(meeting.roomId, req.user.userId, req.user.username || 'Anonymous');
 
     // Add user to participants list if they are not already there
     if (!meeting.participants.some(p => p.toString() === req.user.userId)) {
