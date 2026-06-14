@@ -141,7 +141,7 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
       return res.status(500).json({ error: "LiveKit server credentials not configured on backend." });
     }
 
-    const roomInput = req.body.room || req.body.roomId || req.params.id;
+    const roomInput = (req.body && (req.body.room || req.body.roomId)) || req.params.id;
     let meeting;
 
     // Try finding by 6-digit Room ID first, then by Mongo ID
