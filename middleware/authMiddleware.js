@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
-const blacklistedTokens = require('../utils/tokenBlacklist');
+const redisClient = require('../utils/redisClient');
 
-const authMiddleware = (req, res, next) => {
+const authMiddleware = async (req, res, next) => {
   if (req.method === 'OPTIONS') {
     return next();
   }
@@ -22,9 +22,14 @@ const authMiddleware = (req, res, next) => {
     return res.status(401).json({ error: 'Token missing' });
   }
 
-  if (blacklistedTokens.has(token)) {
-    console.log('Token is blacklisted');
-    return res.status(401).json({ error: 'Token is invalid (logged out)' });
+  try {
+    const isBlacklisted = await redisClient.get(`blacklist:${token}`);
+    if (isBlacklisted) {
+      console.log('Token is blacklisted');
+      return res.status(401).json({ error: 'Token is invalid (logged out)' });
+    }
+  } catch (err) {
+    console.error('Redis error during blacklist check:', err);
   }
 
   try {

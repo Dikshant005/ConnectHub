@@ -36,7 +36,7 @@ const createMailer = () => {
   });
 };
 
-const blacklistedTokens = require('../utils/tokenBlacklist');
+const redisClient = require('../utils/redisClient');
 const authMiddleware = require('../middleware/authMiddleware');
 
 const getTokenFromHeader = (req) => {
@@ -98,10 +98,10 @@ router.post('/login', async (req, res) => {
 });
 
 // Logout
-router.post('/logout', authMiddleware, (req, res) => {
+router.post('/logout', authMiddleware, async (req, res) => {
   const token = getTokenFromHeader(req);
   if (token) {
-    blacklistedTokens.add(token);
+    await redisClient.setEx(`blacklist:${token}`, 3600, 'true');
   }
   res.json({ message: 'Logged out successfully' });
 });
@@ -221,7 +221,8 @@ router.post('/reset-password', async (req, res) => {
     });
 
     if (bearerToken) {
-      if (blacklistedTokens.has(bearerToken)) {
+      const isBlacklisted = await redisClient.get(`blacklist:${bearerToken}`);
+      if (isBlacklisted) {
         console.warn('[auth][reset-password] bearer token blacklisted', meta);
         return res.status(403).json({ error: 'Token is invalid (logged out).' });
       }
