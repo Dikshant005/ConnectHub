@@ -13,13 +13,6 @@ const meetingSchema = new mongoose.Schema({
   recordingUrl: { type: String },
   transcript: { type: String },
   report: { type: Object },
-  audioChunks: [
-    {
-      index: Number,
-      url: String,
-      transcript: { type: String, default: '' },
-    }
-  ],
   createdAt: { type: Date, default: Date.now },
 });
 

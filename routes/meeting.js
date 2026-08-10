@@ -6,6 +6,7 @@ const path = require('path');
 const multer = require('multer');
 const PDFDocument = require('pdfkit');
 const Meeting = require("../models/meeting");
+const Chunk = require("../models/chunk");
 const User = require("../models/user");
 const Message = require("../models/message");
 const authMiddleware = require('../middleware/authMiddleware');
@@ -103,7 +104,7 @@ const processMeetingReportInBackground = async (meetingId, genAI, io) => {
     let fullTranscript = '';
 
     // Sort chunks by index and transcribe each one
-    const chunks = (meeting.audioChunks || []).sort((a, b) => a.index - b.index);
+    const chunks = await Chunk.find({ meetingId: meeting._id }).sort({ index: 1 });
     console.log(`📂 [Background] Processing ${chunks.length} audio chunks...`);
 
     if (chunks.length > 0 && genAI) {
@@ -295,14 +296,13 @@ router.post('/chunk', authMiddleware, upload.single('audio'), async (req, res) =
     }
 
     // Save chunk URL immediately with empty transcript
-    if (!meeting.audioChunks) meeting.audioChunks = [];
-    meeting.audioChunks.push({
+    const newChunk = new Chunk({
+      meetingId: meeting._id,
       index: Number(chunkIndex),
       url: chunkUrl,
       transcript: ''
     });
-    meeting.markModified('audioChunks');
-    await meeting.save();
+    await newChunk.save();
 
     // ✅ Respond to frontend immediately — don't wait for transcription
     res.json({ success: true, chunkIndex, chunkUrl });
@@ -321,9 +321,9 @@ router.post('/chunk', authMiddleware, upload.single('audio'), async (req, res) =
           console.log(`✅ [Background] Chunk ${chunkIndex} transcribed. Length: ${chunkTranscript.length}`);
 
           // Update the transcript for this specific chunk in DB
-          await Meeting.updateOne(
-            { _id: meeting._id, 'audioChunks.index': Number(chunkIndex) },
-            { $set: { 'audioChunks.$.transcript': chunkTranscript } }
+          await Chunk.updateOne(
+            { meetingId: meeting._id, index: Number(chunkIndex) },
+            { $set: { transcript: chunkTranscript } }
           );
         } catch (err) {
           console.error(`❌ [Background] Transcription failed for chunk ${chunkIndex}:`, err);
