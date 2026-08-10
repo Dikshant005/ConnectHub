@@ -36,7 +36,8 @@ const createMailer = () => {
   });
 };
 
-const blacklistedTokens = new Set();
+const blacklistedTokens = require('../utils/tokenBlacklist');
+const authMiddleware = require('../middleware/authMiddleware');
 
 const getTokenFromHeader = (req) => {
   const authHeader = req.headers['authorization'];
@@ -46,25 +47,6 @@ const getTokenFromHeader = (req) => {
   return null;
 };
 
-const authenticateToken = (req, res, next) => {
-  const token = getTokenFromHeader(req);
-
-  if (!token) {
-    return res.status(401).json({ error: 'Access denied. No token provided.' });
-  }
-
-  if (blacklistedTokens.has(token)) {
-    return res.status(403).json({ error: 'Token is invalid (logged out).' });
-  }
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded; 
-    next(); 
-  } catch (err) {
-    res.status(403).json({ error: 'Invalid token.' });
-  }
-};
 
 // ROUTES 
 
@@ -116,7 +98,7 @@ router.post('/login', async (req, res) => {
 });
 
 // Logout
-router.post('/logout', authenticateToken, (req, res) => {
+router.post('/logout', authMiddleware, (req, res) => {
   const token = getTokenFromHeader(req);
   if (token) {
     blacklistedTokens.add(token);
