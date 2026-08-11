@@ -103,49 +103,71 @@ const processMeetingReportInBackground = async (meetingId, genAI, io) => {
 
     let fullTranscript = '';
 
-    // Sort chunks by index and transcribe each one
-    const chunks = await Chunk.find({ meetingId: meeting._id }).sort({ index: 1 });
-    console.log(`📂 [Background] Processing ${chunks.length} audio chunks...`);
+    // Process chunks in batches using pagination
+    const chunkLimit = 50;
+    let chunkSkip = 0;
+    let chunksProcessed = 0;
 
-    if (chunks.length > 0 && genAI) {
-      for (const chunk of chunks) {
-        if (chunk.transcript) {
-          // ✅ Already transcribed during upload — use it directly
-          fullTranscript += (fullTranscript ? '\n' : '') + chunk.transcript;
-          console.log(`✅ [Background] Using pre-transcribed chunk ${chunk.index}`);
-        } else {
-          try {
-            console.log(`🎙️ [Background] Transcribing chunk ${chunk.index} (fallback)...`);
-            const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-            const result = await model.generateContent([
-              {
-                fileData: {
-                  mimeType: "audio/webm",
-                  fileUri: chunk.url
-                }
-              },
-              { text: "Please provide a verbatim transcript of this audio segment." },
-            ]);
-            const chunkTranscript = result.response.text();
-            if (chunkTranscript) {
-              fullTranscript += (fullTranscript ? '\n' : '') + chunkTranscript;
-              console.log(`✅ [Background] Chunk ${chunk.index} transcribed. Length: ${chunkTranscript.length}`);
+    console.log(`📂 [Background] Starting batch processing for audio chunks...`);
+
+    while (true) {
+      const chunks = await Chunk.find({ meetingId: meeting._id }).sort({ index: 1 }).skip(chunkSkip).limit(chunkLimit);
+      if (chunks.length === 0) {
+        if (chunksProcessed === 0) {
+          console.warn("⚠️ [Background] No audio chunks found for transcription.");
+        }
+        break;
+      }
+      
+      chunksProcessed += chunks.length;
+
+      if (genAI) {
+        for (const chunk of chunks) {
+          if (chunk.transcript) {
+            // ✅ Already transcribed during upload — use it directly
+            fullTranscript += (fullTranscript ? '\n' : '') + chunk.transcript;
+            console.log(`✅ [Background] Using pre-transcribed chunk ${chunk.index}`);
+          } else {
+            try {
+              console.log(`🎙️ [Background] Transcribing chunk ${chunk.index} (fallback)...`);
+              const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+              const result = await model.generateContent([
+                {
+                  fileData: {
+                    mimeType: "audio/webm",
+                    fileUri: chunk.url
+                  }
+                },
+                { text: "Please provide a verbatim transcript of this audio segment." },
+              ]);
+              const chunkTranscript = result.response.text();
+              if (chunkTranscript) {
+                fullTranscript += (fullTranscript ? '\n' : '') + chunkTranscript;
+                console.log(`✅ [Background] Chunk ${chunk.index} transcribed. Length: ${chunkTranscript.length}`);
+              }
+            } catch (err) {
+              console.error(`❌ [Background] Failed to transcribe chunk ${chunk.index}:`, err);
+              // Continue with remaining chunks even if one fails
             }
-          } catch (err) {
-            console.error(`❌ [Background] Failed to transcribe chunk ${chunk.index}:`, err);
-            // Continue with remaining chunks even if one fails
           }
         }
       }
-    } else {
-      console.warn("⚠️ [Background] No audio chunks found for transcription.");
+      chunkSkip += chunkLimit;
     }
 
-    // Fetch chat messages
+    // Fetch chat messages using pagination
     let chatHistory = '';
+    const chatLimit = 100;
+    let chatSkip = 0;
     try {
-      const messages = await Message.find({ meetingId: meeting.roomId }).sort({ timestamp: 1 });
-      chatHistory = messages.map(m => `[${m.senderName}]: ${m.text}`).join('\n');
+      while (true) {
+        const messages = await Message.find({ meetingId: meeting.roomId }).sort({ timestamp: 1 }).skip(chatSkip).limit(chatLimit);
+        if (messages.length === 0) break;
+        
+        chatHistory += messages.map(m => `[${m.senderName}]: ${m.text}`).join('\n') + '\n';
+        chatSkip += chatLimit;
+      }
+      chatHistory = chatHistory.trim();
     } catch (err) {
       console.error("Error fetching chat messages:", err);
     }
