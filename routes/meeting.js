@@ -236,7 +236,7 @@ const finalizeMeetingEnd = async (req, res, meetingIdOrRoomId) => {
     });
   }
 
-  // ✅ No audioFilePath — chunks already uploaded during meeting
+  //No audioFilePath — chunks already uploaded during meeting
   processMeetingReportInBackground(meeting._id, req.genAI, req.io);
 
   return res.json({
@@ -247,7 +247,7 @@ const finalizeMeetingEnd = async (req, res, meetingIdOrRoomId) => {
   });
 };
 
-// ---------- CREATE MEETING ----------
+// CREATE MEETING 
 router.post('/', authMiddleware, async (req, res) => {
   console.log("➡️ CREATE MEETING API HIT");
 
@@ -283,7 +283,7 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 });
 
-// ---------- CHUNK UPLOAD ----------
+// CHUNK UPLOAD 
 router.post('/chunk', authMiddleware, upload.single('audio'), async (req, res) => {
   console.log("➡️ CHUNK UPLOAD API HIT");
 
@@ -326,10 +326,10 @@ router.post('/chunk', authMiddleware, upload.single('audio'), async (req, res) =
     });
     await newChunk.save();
 
-    // ✅ Respond to frontend immediately — don't wait for transcription
+    // Respond to frontend immediately — don't wait for transcription
     res.json({ success: true, chunkIndex, chunkUrl });
 
-    // ✅ Transcribe in background — won't block or affect UX at all
+    // Transcribe in background — won't block or affect UX at all
     if (genAI) {
       (async () => {
         try {
@@ -361,7 +361,7 @@ router.post('/chunk', authMiddleware, upload.single('audio'), async (req, res) =
   }
 });
 
-// ---------- END MEETING ----------
+// END MEETING 
 router.post('/end', authMiddleware, async (req, res) => {
   console.log("➡️ END MEETING API HIT");
   try {
@@ -389,7 +389,7 @@ router.delete('/:id/end', authMiddleware, async (req, res) => {
   }
 });
 
-// ---------- JOIN MEETING ----------
+// JOIN MEETING 
 router.post('/:id/join', authMiddleware, async (req, res) => {
   console.log("➡️ JOIN MEETING API HIT");
 
@@ -453,7 +453,7 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
   }
 });
 
-// ---------- GET PARTICIPANTS ----------
+// GET PARTICIPANTS 
 router.get('/:id/participants', authMiddleware, async (req, res) => {
     try {
         const { id } = req.params;
@@ -471,7 +471,7 @@ router.get('/:id/participants', authMiddleware, async (req, res) => {
             return res.status(404).json({ error: 'Meeting not found' });
         }
 
-        // ✅ Ensure host/creator is always in the list
+        // Ensure host/creator is always in the list
         const participantIds = meeting.participants.map(p => p._id.toString());
         let participantList = [...meeting.participants];
 
@@ -483,8 +483,8 @@ router.get('/:id/participants', authMiddleware, async (req, res) => {
         return res.json({
             roomId: meeting.roomId,
             meetingId: meeting._id,
-            hostUserId: meeting.creator,       // ✅ always send this
-            participants: participantList,      // ✅ always includes host
+            hostUserId: meeting.creator,       // always send this
+            participants: participantList,      // always includes host
             participantsCount: participantList.length,
         });
 

@@ -11,9 +11,8 @@ const memoryCache = new Map();
 
 redisClient.on('error', (err) => {
   if (err.code === 'ECONNREFUSED') {
-    // Only log once to prevent console spam
     if (isConnected !== false) {
-      console.warn('⚠️ Redis connection refused. Falling back to in-memory cache for local development.');
+      console.warn('Redis connection refused. Falling back to in-memory cache for local development.');
       isConnected = false;
     }
   } else {
@@ -23,7 +22,7 @@ redisClient.on('error', (err) => {
 
 redisClient.on('ready', () => {
   isConnected = true;
-  console.log('✅ Connected to Redis successfully.');
+  console.log('Connected to Redis successfully.');
 });
 
 // Connect in the background
